@@ -1,0 +1,35 @@
+panel:
+  base_url: "http://127.0.0.1:2053/"
+  token_env: "THREEX_ABUSE_GUARD_TOKEN"
+  timeout_seconds: 10
+  restart_xray: false
+
+xray:
+  access_log: "/var/log/x-ui/access.log"
+  torrent_tag: "TORRENT"
+  blocked_tag: "blocked"
+
+firewall:
+  backend: "iptables"
+  chain: "THREEX_ABUSE_GUARD"
+  block_minutes: 1440
+  bypass_ips:
+    - "127.0.0.1"
+    - "::1"
+
+policy:
+  mode: "balanced"
+  window_minutes: 60
+  torrent_ip_block_on_first_hit: true
+  torrent_disable_client_after: 2
+  blocked_disable_client_after: 0
+  blocked_notify_after: 5
+
+notify:
+  webhook_url: ""
+
+state:
+  path: "/var/lib/3x-abuse-guard/state.db"
+
+logging:
+  dir: "/var/log/3x-abuse-guard"

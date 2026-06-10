@@ -1,0 +1,6 @@
+/3x-abuse-guard
+/dist/
+/tmp/
+*.db
+*.log
+.DS_Store
