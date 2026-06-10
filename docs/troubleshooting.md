@@ -1,11 +1,18 @@
 # Troubleshooting
 
-## `doctor` says API token is missing
+## `doctor` says panel auth is missing
 
-Create a token in 3x-ui **Settings -> Security -> API Token**, then export it:
+Use API token auth when your panel supports it:
 
 ```bash
 export THREEX_ABUSE_GUARD_TOKEN=your-token
+```
+
+Use login auth when your panel has no API Token menu:
+
+```bash
+export THREEX_ABUSE_GUARD_USERNAME=your-panel-username
+export THREEX_ABUSE_GUARD_PASSWORD=your-panel-password
 ```
 
 For systemd, put it in:
@@ -29,7 +36,7 @@ Check:
 
 - Access log line includes `email: <client-email>`.
 - `policy.torrent_disable_client_after` is greater than 0.
-- 3x-ui API token is valid.
+- 3x-ui API token is valid, or login auth username/password is valid.
 - Client exists in 3x-ui with the same email.
 
 ## Unblock an IP

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/zachary9757/3x-abuse-guard/internal/config"
-	"github.com/zachary9757/3x-abuse-guard/internal/panel"
 )
 
 type Check struct {
@@ -25,18 +24,13 @@ func Doctor(ctx context.Context, cfg config.Config) []Check {
 		checks = append(checks, Check{"access log", true, cfg.Xray.AccessLog})
 	}
 
-	token := os.Getenv(cfg.Panel.TokenEnv)
-	if token == "" {
-		checks = append(checks, Check{"api token", false, fmt.Sprintf("missing env %s", cfg.Panel.TokenEnv)})
-		return checks
-	}
-	checks = append(checks, Check{"api token", true, cfg.Panel.TokenEnv})
-
-	client, err := panel.New(cfg.Panel.BaseURL, token, cfg.PanelTimeout())
+	client, authMode, err := newPanelClient(cfg)
 	if err != nil {
-		checks = append(checks, Check{"panel client", false, err.Error()})
+		checks = append(checks, Check{"panel auth", false, err.Error()})
 		return checks
 	}
+	checks = append(checks, Check{"panel auth", true, authMode})
+
 	xrayConfig, err := client.GetConfigJSON(ctx)
 	if err != nil {
 		checks = append(checks, Check{"panel api", false, err.Error()})

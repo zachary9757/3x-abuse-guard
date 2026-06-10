@@ -204,7 +204,7 @@ func runInstall(args []string) error {
 		return err
 	}
 	fmt.Println("installed config, env, state/log directories, and systemd unit")
-	fmt.Println("edit /etc/3x-abuse-guard/env and set THREEX_ABUSE_GUARD_TOKEN")
+	fmt.Println("edit /etc/3x-abuse-guard/env and set THREEX_ABUSE_GUARD_TOKEN or THREEX_ABUSE_GUARD_USERNAME/THREEX_ABUSE_GUARD_PASSWORD")
 	fmt.Println("then run: systemctl daemon-reload && systemctl enable --now 3x-abuse-guard")
 	return nil
 }

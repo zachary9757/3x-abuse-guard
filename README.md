@@ -12,11 +12,23 @@ V1 刻意保持克制：
 
 ## 一键安装（推荐）
 
-在 3x-ui 的 **Settings -> Security -> API Token** 中先创建 API Token，然后执行：
+如果你的 3x-ui/Xpanel 有 API Token，推荐用 Token 安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
   --token "你的3x-ui API Token" \
+  --panel-url "http://127.0.0.1:2053/" \
+  --access-log "/var/log/x-ui/access.log" \
+  --backend iptables
+```
+
+如果免费版没有 API Token 菜单，改用面板账号密码登录模式：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
+  --auth-mode login \
+  --username "你的3x-ui面板用户名" \
+  --password "你的3x-ui面板密码" \
   --panel-url "http://127.0.0.1:2053/" \
   --access-log "/var/log/x-ui/access.log" \
   --backend iptables
@@ -31,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
 - 创建 `/var/lib/3x-abuse-guard`、`/var/log/3x-abuse-guard`。
 - 安装并启动 `3x-abuse-guard.service`。
 
-如果暂时没有 API Token，可以先只安装不启动：
+如果暂时不配置面板鉴权，可以先只安装不启动：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- --no-start
@@ -48,8 +60,12 @@ sudo systemctl enable --now 3x-abuse-guard
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `--token` | 空 | 写入 3x-ui API Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 |
 | `--panel-url` | `http://127.0.0.1:2053/` | 3x-ui 面板地址，必须是守护进程所在服务器能访问的地址。 |
+| `--auth-mode` | `auto` | 面板鉴权方式。`auto` 优先用 Token，缺少 Token 时用账号密码；也可以指定 `token` 或 `login`。 |
+| `--token` | 空 | 写入 3x-ui API Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 |
+| `--username` | 空 | 写入 3x-ui 面板用户名；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_USERNAME`。 |
+| `--password` | 空 | 写入 3x-ui 面板密码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_PASSWORD`。 |
+| `--two-factor-code` | 空 | 写入 3x-ui 两步验证码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_2FA_CODE`。 |
 | `--access-log` | `/var/log/x-ui/access.log` | Xray access log 路径，必须和 3x-ui/Xray 实际日志路径一致。 |
 | `--backend` | `iptables` | 防火墙后端，可选 `iptables`、`nft`、`noop`；`noop` 只记录事件，不封 IP。 |
 | `--mode` | `balanced` | 策略模式，可选 `balanced`、`strict`、`observe`。 |
@@ -103,7 +119,7 @@ sudo systemctl enable --now 3x-abuse-guard
 运行就绪检查：
 
 ```bash
-sudo THREEX_ABUSE_GUARD_TOKEN=your-token 3x-abuse-guard doctor
+sudo 3x-abuse-guard doctor
 ```
 
 ## 配置文件
@@ -113,7 +129,11 @@ sudo THREEX_ABUSE_GUARD_TOKEN=your-token 3x-abuse-guard doctor
 ```yaml
 panel:
   base_url: "http://127.0.0.1:2053/"
+  auth_mode: "auto"
   token_env: "THREEX_ABUSE_GUARD_TOKEN"
+  username_env: "THREEX_ABUSE_GUARD_USERNAME"
+  password_env: "THREEX_ABUSE_GUARD_PASSWORD"
+  two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
   restart_xray: false
 
@@ -153,7 +173,11 @@ logging:
 | 参数 | 作用 |
 | --- | --- |
 | `panel.base_url` | 3x-ui 面板 API 地址。通常填本机地址，例如 `http://127.0.0.1:2053/`。 |
+| `panel.auth_mode` | 面板鉴权方式：`auto`、`token` 或 `login`。`auto` 优先使用 Token，缺少 Token 时使用账号密码登录。 |
 | `panel.token_env` | 从哪个环境变量读取 3x-ui API Token。默认是 `THREEX_ABUSE_GUARD_TOKEN`。 |
+| `panel.username_env` | 从哪个环境变量读取 3x-ui 面板用户名。默认是 `THREEX_ABUSE_GUARD_USERNAME`。 |
+| `panel.password_env` | 从哪个环境变量读取 3x-ui 面板密码。默认是 `THREEX_ABUSE_GUARD_PASSWORD`。 |
+| `panel.two_factor_code_env` | 从哪个环境变量读取 3x-ui 两步验证码。未开启 2FA 时可留空。 |
 | `panel.timeout_seconds` | 调用 3x-ui API 的超时时间。 |
 | `panel.restart_xray` | 保留参数，默认不自动重启 Xray，避免误操作。 |
 | `xray.access_log` | Xray access log 路径。守护进程通过它识别 `TORRENT` 和 `blocked` 命中。 |
@@ -213,7 +237,7 @@ sudo install -m 0755 3x-abuse-guard /usr/local/bin/3x-abuse-guard
 sudo 3x-abuse-guard install
 ```
 
-写入 3x-ui API Token：
+写入 3x-ui 鉴权信息，Token 和账号密码二选一即可：
 
 ```bash
 sudo nano /etc/3x-abuse-guard/env
@@ -221,6 +245,9 @@ sudo nano /etc/3x-abuse-guard/env
 
 ```text
 THREEX_ABUSE_GUARD_TOKEN=your-token-here
+THREEX_ABUSE_GUARD_USERNAME=
+THREEX_ABUSE_GUARD_PASSWORD=
+THREEX_ABUSE_GUARD_2FA_CODE=
 ```
 
 启动守护进程：
@@ -268,6 +295,7 @@ V1 is intentionally narrow:
 - Treats `blocked` outbound hits as high-risk traffic, but not torrent abuse.
 - Blocks torrent source IPs for 24 hours by default.
 - Disables a 3x-ui client after 2 torrent hits within 60 minutes by default.
+- Supports either Bearer token auth or username/password login auth for 3x-ui API calls.
 - Keeps local state in bbolt at `/var/lib/3x-abuse-guard/state.db`.
 
 ## Install From Source
@@ -280,7 +308,7 @@ sudo install -m 0755 3x-abuse-guard /usr/local/bin/3x-abuse-guard
 sudo 3x-abuse-guard install
 ```
 
-Create a 3x-ui API token in **Settings -> Security -> API Token**, then set it:
+Set either a 3x-ui API token or panel login credentials:
 
 ```bash
 sudo nano /etc/3x-abuse-guard/env
@@ -288,6 +316,9 @@ sudo nano /etc/3x-abuse-guard/env
 
 ```text
 THREEX_ABUSE_GUARD_TOKEN=your-token-here
+THREEX_ABUSE_GUARD_USERNAME=
+THREEX_ABUSE_GUARD_PASSWORD=
+THREEX_ABUSE_GUARD_2FA_CODE=
 ```
 
 Start the daemon:
@@ -311,7 +342,7 @@ Then apply the snippets in the 3x-ui Xray configuration UI. See [docs/3x-ui-xray
 Run a readiness check:
 
 ```bash
-sudo THREEX_ABUSE_GUARD_TOKEN=your-token 3x-abuse-guard doctor
+sudo 3x-abuse-guard doctor
 ```
 
 ## Commands

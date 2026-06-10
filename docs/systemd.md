@@ -8,7 +8,7 @@ sudo install -m 0755 3x-abuse-guard /usr/local/bin/3x-abuse-guard
 sudo 3x-abuse-guard install
 ```
 
-Edit the token environment file:
+Edit the panel auth environment file. Use either API token auth:
 
 ```bash
 sudo nano /etc/3x-abuse-guard/env
@@ -16,6 +16,18 @@ sudo nano /etc/3x-abuse-guard/env
 
 ```text
 THREEX_ABUSE_GUARD_TOKEN=your-3x-ui-api-token
+THREEX_ABUSE_GUARD_USERNAME=
+THREEX_ABUSE_GUARD_PASSWORD=
+THREEX_ABUSE_GUARD_2FA_CODE=
+```
+
+Or use login auth when your panel has no API Token menu:
+
+```text
+THREEX_ABUSE_GUARD_TOKEN=
+THREEX_ABUSE_GUARD_USERNAME=your-panel-username
+THREEX_ABUSE_GUARD_PASSWORD=your-panel-password
+THREEX_ABUSE_GUARD_2FA_CODE=
 ```
 
 Start:

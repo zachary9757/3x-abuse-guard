@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/zachary9757/3x-abuse-guard/internal/firewall"
 	"github.com/zachary9757/3x-abuse-guard/internal/logwatch"
 	"github.com/zachary9757/3x-abuse-guard/internal/notify"
-	"github.com/zachary9757/3x-abuse-guard/internal/panel"
 	"github.com/zachary9757/3x-abuse-guard/internal/policy"
 	"github.com/zachary9757/3x-abuse-guard/internal/state"
 )
@@ -59,12 +57,7 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 
 	var panelClient policy.Panel
 	if policyCfg.TorrentDisableAfter > 0 || policyCfg.BlockedDisableAfter > 0 {
-		token := os.Getenv(cfg.Panel.TokenEnv)
-		if token == "" {
-			store.Close()
-			return nil, fmt.Errorf("missing 3x-ui API token in %s", cfg.Panel.TokenEnv)
-		}
-		p, err := panel.New(cfg.Panel.BaseURL, token, cfg.PanelTimeout())
+		p, _, err := newPanelClient(cfg)
 		if err != nil {
 			store.Close()
 			return nil, err

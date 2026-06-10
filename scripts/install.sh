@@ -8,7 +8,11 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/3x-abuse-guard}"
 STATE_DIR="${STATE_DIR:-/var/lib/3x-abuse-guard}"
 LOG_DIR="${LOG_DIR:-/var/log/3x-abuse-guard}"
 PANEL_URL="${PANEL_URL:-http://127.0.0.1:2053/}"
+AUTH_MODE="${AUTH_MODE:-auto}"
 TOKEN="${THREEX_ABUSE_GUARD_TOKEN:-}"
+USERNAME="${THREEX_ABUSE_GUARD_USERNAME:-}"
+PASSWORD="${THREEX_ABUSE_GUARD_PASSWORD:-}"
+TWO_FACTOR_CODE="${THREEX_ABUSE_GUARD_2FA_CODE:-}"
 XRAY_ACCESS_LOG="${XRAY_ACCESS_LOG:-/var/log/x-ui/access.log}"
 FIREWALL_BACKEND="${FIREWALL_BACKEND:-iptables}"
 POLICY_MODE="${POLICY_MODE:-balanced}"
@@ -26,8 +30,13 @@ usage() {
   curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- [参数]
 
 常用参数：
-  --token TOKEN              3x-ui API Token；也可用环境变量 THREEX_ABUSE_GUARD_TOKEN
   --panel-url URL            3x-ui 面板地址，默认 http://127.0.0.1:2053/
+  --auth-mode auto|token|login
+                             面板鉴权方式，默认 auto；优先 token，缺少 token 时用账号密码
+  --token TOKEN              3x-ui API Token；也可用环境变量 THREEX_ABUSE_GUARD_TOKEN
+  --username USERNAME        3x-ui 面板用户名；也可用环境变量 THREEX_ABUSE_GUARD_USERNAME
+  --password PASSWORD        3x-ui 面板密码；也可用环境变量 THREEX_ABUSE_GUARD_PASSWORD
+  --two-factor-code CODE     3x-ui 两步验证码；也可用环境变量 THREEX_ABUSE_GUARD_2FA_CODE
   --access-log PATH          Xray access log 路径，默认 /var/log/x-ui/access.log
   --backend iptables|nft|noop
                              防火墙后端，默认 iptables；noop 只记录不写防火墙
@@ -46,6 +55,11 @@ usage() {
     --token "你的3x-ui-token" \
     --panel-url "http://127.0.0.1:2053/" \
     --backend iptables
+
+  curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
+    --auth-mode login \
+    --username "你的面板用户名" \
+    --password "你的面板密码"
 EOF
 }
 
@@ -83,8 +97,24 @@ parse_args() {
         PANEL_URL="${2:-}"
         shift 2
         ;;
+      --auth-mode)
+        AUTH_MODE="${2:-}"
+        shift 2
+        ;;
       --access-log)
         XRAY_ACCESS_LOG="${2:-}"
+        shift 2
+        ;;
+      --username)
+        USERNAME="${2:-}"
+        shift 2
+        ;;
+      --password)
+        PASSWORD="${2:-}"
+        shift 2
+        ;;
+      --two-factor-code)
+        TWO_FACTOR_CODE="${2:-}"
         shift 2
         ;;
       --backend)
@@ -131,6 +161,10 @@ parse_args() {
 }
 
 validate_args() {
+  case "$AUTH_MODE" in
+    auto|token|login) ;;
+    *) die "--auth-mode 只能是 auto、token 或 login" ;;
+  esac
   case "$FIREWALL_BACKEND" in
     iptables|nft|noop) ;;
     *) die "--backend 只能是 iptables、nft 或 noop" ;;
@@ -285,13 +319,39 @@ install_binary() {
   build_from_source
 }
 
-prompt_token_if_needed() {
-  if [ -n "$TOKEN" ]; then
+has_panel_auth() {
+  case "$AUTH_MODE" in
+    token)
+      [ -n "$TOKEN" ]
+      ;;
+    login)
+      [ -n "$USERNAME" ] && [ -n "$PASSWORD" ]
+      ;;
+    auto)
+      [ -n "$TOKEN" ] || { [ -n "$USERNAME" ] && [ -n "$PASSWORD" ]; }
+      ;;
+  esac
+}
+
+prompt_auth_if_needed() {
+  if has_panel_auth; then
     return
   fi
   if [ -t 0 ]; then
-    printf '请输入 3x-ui API Token（可留空，稍后手动配置）：'
-    read -r TOKEN
+    if [ "$AUTH_MODE" != "login" ]; then
+      printf '请输入 3x-ui API Token（可留空，改用账号密码）：'
+      read -r TOKEN
+    fi
+    if [ -z "$TOKEN" ] && [ "$AUTH_MODE" != "token" ]; then
+      printf '请输入 3x-ui 面板用户名（可留空，稍后手动配置）：'
+      read -r USERNAME
+      if [ -n "$USERNAME" ]; then
+        printf '请输入 3x-ui 面板密码：'
+        read -r PASSWORD
+        printf '请输入 3x-ui 两步验证码（未开启可留空）：'
+        read -r TWO_FACTOR_CODE
+      fi
+    fi
   fi
 }
 
@@ -300,7 +360,11 @@ write_config() {
   cat >"$CONFIG_DIR/config.yaml" <<EOF
 panel:
   base_url: "$PANEL_URL"
+  auth_mode: "$AUTH_MODE"
   token_env: "THREEX_ABUSE_GUARD_TOKEN"
+  username_env: "THREEX_ABUSE_GUARD_USERNAME"
+  password_env: "THREEX_ABUSE_GUARD_PASSWORD"
+  two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
   restart_xray: false
 
@@ -337,6 +401,9 @@ EOF
 
   cat >"$CONFIG_DIR/env" <<EOF
 THREEX_ABUSE_GUARD_TOKEN=$TOKEN
+THREEX_ABUSE_GUARD_USERNAME=$USERNAME
+THREEX_ABUSE_GUARD_PASSWORD=$PASSWORD
+THREEX_ABUSE_GUARD_2FA_CODE=$TWO_FACTOR_CODE
 EOF
 
   chmod 600 "$CONFIG_DIR/config.yaml" "$CONFIG_DIR/env"
@@ -355,8 +422,8 @@ start_service() {
     warn "已按 --no-start 跳过启动服务"
     return
   fi
-  if [ -z "$TOKEN" ]; then
-    warn "未配置 THREEX_ABUSE_GUARD_TOKEN，暂不启动服务。请编辑 $CONFIG_DIR/env 后执行：systemctl enable --now 3x-abuse-guard"
+  if ! has_panel_auth; then
+    warn "未配置 API Token 或面板账号密码，暂不启动服务。请编辑 $CONFIG_DIR/env 后执行：systemctl enable --now 3x-abuse-guard"
     return
   fi
   systemctl enable --now 3x-abuse-guard
@@ -374,7 +441,7 @@ print_next_steps() {
      3x-abuse-guard print-xray-policy
 
 2. 运行检查：
-     THREEX_ABUSE_GUARD_TOKEN='你的token' 3x-abuse-guard doctor
+     3x-abuse-guard doctor
 
 3. 查看运行状态：
      systemctl status 3x-abuse-guard --no-pager
@@ -388,7 +455,7 @@ main() {
   validate_args
   need_root
   ensure_base_deps
-  prompt_token_if_needed
+  prompt_auth_if_needed
   install_binary
   install_service_files
   start_service

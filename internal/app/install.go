@@ -30,7 +30,12 @@ func Install(prefix string, binaryPath string) error {
 		}
 	}
 	if _, err := os.Stat(envPath); os.IsNotExist(err) {
-		if err := os.WriteFile(envPath, []byte("THREEX_ABUSE_GUARD_TOKEN=\n"), 0o600); err != nil {
+		env := `THREEX_ABUSE_GUARD_TOKEN=
+THREEX_ABUSE_GUARD_USERNAME=
+THREEX_ABUSE_GUARD_PASSWORD=
+THREEX_ABUSE_GUARD_2FA_CODE=
+`
+		if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
 			return err
 		}
 	}

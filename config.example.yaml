@@ -1,6 +1,10 @@
 panel:
   base_url: "http://127.0.0.1:2053/"
+  auth_mode: "auto"
   token_env: "THREEX_ABUSE_GUARD_TOKEN"
+  username_env: "THREEX_ABUSE_GUARD_USERNAME"
+  password_env: "THREEX_ABUSE_GUARD_PASSWORD"
+  two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
   restart_xray: false
 
