@@ -19,7 +19,7 @@ var (
 )
 
 type Store struct {
-	db *bbolt.DB
+	path string
 }
 
 type EventRecord struct {
@@ -52,27 +52,19 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
-	if err != nil {
-		return nil, err
-	}
-	s := &Store{db: db}
+	s := &Store{path: path}
 	if err := s.init(); err != nil {
-		db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
 func (s *Store) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	return s.db.Close()
+	return nil
 }
 
 func (s *Store) init() error {
-	return s.db.Update(func(tx *bbolt.Tx) error {
+	return s.update(func(tx *bbolt.Tx) error {
 		if _, err := tx.CreateBucketIfNotExists(eventsBucket); err != nil {
 			return err
 		}
@@ -87,7 +79,7 @@ func (s *Store) RecordEvent(rec EventRecord) (EventRecord, error) {
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = time.Now()
 	}
-	err := s.db.Update(func(tx *bbolt.Tx) error {
+	err := s.update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(eventsBucket)
 		id, err := b.NextSequence()
 		if err != nil {
@@ -105,7 +97,7 @@ func (s *Store) RecordEvent(rec EventRecord) (EventRecord, error) {
 
 func (s *Store) CountEvents(email string, kind string, since time.Time) (int, error) {
 	count := 0
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := s.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(eventsBucket).ForEach(func(_, v []byte) error {
 			var rec EventRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
@@ -122,7 +114,7 @@ func (s *Store) CountEvents(email string, kind string, since time.Time) (int, er
 
 func (s *Store) SumScores(email string, sourceIP string, since time.Time) (int, error) {
 	total := 0
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := s.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(eventsBucket).ForEach(func(_, v []byte) error {
 			var rec EventRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
@@ -151,7 +143,7 @@ func (s *Store) RecentEvents(limit int) ([]EventRecord, error) {
 		limit = 20
 	}
 	events := make([]EventRecord, 0, limit)
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := s.view(func(tx *bbolt.Tx) error {
 		c := tx.Bucket(eventsBucket).Cursor()
 		for k, v := c.Last(); k != nil && len(events) < limit; k, v = c.Prev() {
 			var rec EventRecord
@@ -176,13 +168,13 @@ func (s *Store) UpsertBan(rec BanRecord) error {
 	if err != nil {
 		return err
 	}
-	return s.db.Update(func(tx *bbolt.Tx) error {
+	return s.update(func(tx *bbolt.Tx) error {
 		return tx.Bucket(bansBucket).Put([]byte(rec.IP), data)
 	})
 }
 
 func (s *Store) RemoveBan(ip string) error {
-	return s.db.Update(func(tx *bbolt.Tx) error {
+	return s.update(func(tx *bbolt.Tx) error {
 		return tx.Bucket(bansBucket).Delete([]byte(ip))
 	})
 }
@@ -192,7 +184,7 @@ func (s *Store) ListBans(now time.Time) ([]BanRecord, error) {
 		now = time.Now()
 	}
 	bans := []BanRecord{}
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := s.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(bansBucket).ForEach(func(_, v []byte) error {
 			var rec BanRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
@@ -212,7 +204,7 @@ func (s *Store) ExpiredBans(now time.Time) ([]BanRecord, error) {
 		now = time.Now()
 	}
 	bans := []BanRecord{}
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := s.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(bansBucket).ForEach(func(_, v []byte) error {
 			var rec BanRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
@@ -225,6 +217,31 @@ func (s *Store) ExpiredBans(now time.Time) ([]BanRecord, error) {
 		})
 	})
 	return bans, err
+}
+
+func (s *Store) view(fn func(*bbolt.Tx) error) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.View(fn)
+}
+
+func (s *Store) update(fn func(*bbolt.Tx) error) error {
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.Update(fn)
+}
+
+func (s *Store) open() (*bbolt.DB, error) {
+	if s == nil || s.path == "" {
+		return nil, errors.New("state path is required")
+	}
+	return bbolt.Open(s.path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
 }
 
 func u64(v uint64) []byte {

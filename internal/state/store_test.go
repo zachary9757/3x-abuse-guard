@@ -63,3 +63,35 @@ func TestStoreEventsAndBans(t *testing.T) {
 		t.Fatalf("len(bans) = %d", len(bans))
 	}
 }
+
+func TestStoreDoesNotHoldDatabaseLockBetweenOperations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+
+	if _, err := first.RecordEvent(EventRecord{
+		Kind:      "torrent",
+		Email:     "alice",
+		SourceIP:  "198.51.100.10",
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	events, err := second.RecentEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("len(events) = %d", len(events))
+	}
+}

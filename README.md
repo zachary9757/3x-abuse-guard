@@ -96,6 +96,7 @@ sudo systemctl enable --now 3x-abuse-guard
 ## 已完成能力
 
 - 监听 Xray access log，解析来源 IP、目标地址、出站标签和 3x-ui client email。
+- 兼容 Xray access log 中 `[inbound >> outbound]` 和 `[inbound -> outbound]` 两种出站格式。
 - 将 `TORRENT` 出站标签视为 BT/种子滥用。
 - 将 `blocked` 出站标签视为高风险访问，但不当作 BT 处理。
 - 第一次 BT 命中默认封禁源 IP 24 小时，并尝试通过 `conntrack` 断开现有连接。
@@ -104,6 +105,7 @@ sudo systemctl enable --now 3x-abuse-guard
 - 支持 IP 白名单，避免误封本机、内网或中转 IP。
 - 支持 `iptables`、`nftables` 和 `noop` 防火墙后端。
 - 使用 bbolt 在 `/var/lib/3x-abuse-guard/state.db` 保存本地状态，服务重启后会恢复未过期封禁。
+- CLI 读写状态时短暂打开数据库，避免 daemon 运行期间 `status/unblock/test-event` 因 bbolt 文件锁超时。
 - 支持 Webhook 通知。
 - 提供 `doctor` 检查 3x-ui API、access log、Xray outbound、routing 和 sniffing。
 - 提供 `print-xray-policy` 输出 3x-ui/Xray 需要加入的配置片段。
@@ -114,6 +116,7 @@ sudo systemctl enable --now 3x-abuse-guard
 
 ```text
 2026/06/10 09:00:58 from 198.51.100.10:6148 accepted tcp:example.com:443 [inbound-1 >> TORRENT] email: alice
+2026/06/10 09:00:59 from 198.51.100.10:6149 accepted tcp:1.1.1.1:25 [inbound-1 -> blocked] email: alice
 ```
 
 ## 配置 3x-ui/Xray
