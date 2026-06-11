@@ -267,6 +267,19 @@ logging:
 | `state.path` | 本地状态数据库路径，用于记录事件和封禁。 |
 | `logging.dir` | 守护进程自身日志目录。systemd 日志仍可用 `journalctl` 查看。 |
 
+## 通知和 Telegram
+
+当前版本支持通用 Webhook 通知：
+
+```yaml
+notify:
+  webhook_url: "https://example.com/your-webhook"
+```
+
+守护进程会向该 URL `POST` JSON 事件，包含 `action`、`kind`、`email`、`ip`、`reason`、`timestamp` 等字段。
+
+当前版本还没有内置 Telegram Bot 专用通知。Telegram Bot API 的 `sendMessage` 需要 `chat_id` 和 `text` 表单/JSON 参数，不能直接接收本项目当前的通用事件 JSON。要接 Telegram，暂时需要一个中间 Webhook 服务把本项目事件转换成 Telegram `sendMessage` 请求。
+
 ## 默认策略
 
 ```yaml
@@ -326,6 +339,51 @@ sudo iptables -t raw -S | grep THREEX_ABUSE_GUARD
 
 # 查看本项目 iptables 链的详细包计数和已封禁 IP。
 sudo iptables -t raw -L THREEX_ABUSE_GUARD -n -v
+```
+
+## 完全卸载
+
+下面命令会停止服务、删除二进制、配置、状态数据库、日志目录，并清理本项目可能留下的 `iptables`、`ip6tables`、`nftables` 防火墙规则。执行前请确认不再需要 `/etc/3x-abuse-guard` 和 `/var/lib/3x-abuse-guard` 中的数据。
+
+```bash
+# 停止并禁用 systemd 服务。
+sudo systemctl stop 3x-abuse-guard 2>/dev/null || true
+sudo systemctl disable 3x-abuse-guard 2>/dev/null || true
+
+# 清理 iptables raw 表中的跳转规则、封禁规则和项目链。
+sudo iptables -t raw -D PREROUTING -j THREEX_ABUSE_GUARD 2>/dev/null || true
+sudo iptables -t raw -F THREEX_ABUSE_GUARD 2>/dev/null || true
+sudo iptables -t raw -X THREEX_ABUSE_GUARD 2>/dev/null || true
+
+# 清理 IPv6 的 ip6tables raw 表规则。
+sudo ip6tables -t raw -D PREROUTING -j THREEX_ABUSE_GUARD 2>/dev/null || true
+sudo ip6tables -t raw -F THREEX_ABUSE_GUARD 2>/dev/null || true
+sudo ip6tables -t raw -X THREEX_ABUSE_GUARD 2>/dev/null || true
+
+# 如果曾经使用 nft 后端，删除项目 nft table。
+sudo nft delete table inet THREEX_ABUSE_GUARD 2>/dev/null || true
+
+# 删除 systemd 服务文件。
+sudo rm -f /etc/systemd/system/3x-abuse-guard.service
+
+# 删除二进制和辅助命令。
+sudo rm -f /usr/local/bin/3x-abuse-guard
+sudo rm -f /usr/local/bin/3x-abuse-guardctl
+
+# 删除配置、状态数据库和本项目日志。
+sudo rm -rf /etc/3x-abuse-guard
+sudo rm -rf /var/lib/3x-abuse-guard
+sudo rm -rf /var/log/3x-abuse-guard
+
+# 重载 systemd 配置。
+sudo systemctl daemon-reload
+
+# 确认卸载结果；输出 not found / No such file or directory 表示已删除。
+command -v 3x-abuse-guard || true
+command -v 3x-abuse-guardctl || true
+ls /etc/3x-abuse-guard 2>/dev/null || true
+ls /var/lib/3x-abuse-guard 2>/dev/null || true
+sudo iptables -t raw -S | grep THREEX_ABUSE_GUARD || true
 ```
 
 ## 从源码安装
