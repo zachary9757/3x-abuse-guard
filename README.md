@@ -285,16 +285,47 @@ policy:
 - 同一 email 在 60 分钟内第二次 BT 命中会禁用该 client。
 - `blocked` 高风险访问默认只在 5 次后发送通知，不自动禁用。
 
-## 命令
+## 常用运维命令
 
-```text
+```bash
+# 前台运行守护进程，主要用于调试；生产环境建议使用 systemd。
 3x-abuse-guard run
+
+# 安装默认配置、环境文件、状态目录、日志目录和 systemd service。
 3x-abuse-guard install
-3x-abuse-guardctl doctor
+
+# 输出 3x-ui/Xray 需要添加的 TORRENT/blocked outbounds、routing 和 sniffing 片段。
 3x-abuse-guard print-xray-policy
-3x-abuse-guardctl status
-3x-abuse-guardctl unblock <ip>
-3x-abuse-guardctl test-event --email alice --ip 198.51.100.10 --tag TORRENT
+
+# 自动加载 /etc/3x-abuse-guard/env 后检查 access log、面板 API、Xray 配置和 sniffing。
+sudo 3x-abuse-guardctl doctor
+
+# 查看当前封禁 IP 和最近风险事件；只读，不会修改防火墙或配置。
+sudo 3x-abuse-guardctl status
+
+# 手动解除一个 IP 的封禁，同时删除本地状态库里的 ban 记录。
+sudo 3x-abuse-guardctl unblock 198.51.100.10
+
+# 本地模拟一次事件，用于验证策略、封禁和状态记录是否正常。
+sudo 3x-abuse-guardctl test-event --email alice --ip 198.51.100.10 --tag TORRENT
+
+# 查看 systemd 服务是否正在运行。
+sudo systemctl status 3x-abuse-guard --no-pager
+
+# 查看最近 50 行服务日志，排查启动、面板 API、封禁和解封问题。
+sudo journalctl -u 3x-abuse-guard -n 50 --no-pager
+
+# 实时跟随服务日志。
+sudo journalctl -u 3x-abuse-guard -f --no-pager
+
+# 查看 Xray access log，确认是否有真实用户流量和 email 字段。
+tail -n 30 /var/log/x-ui/access.log
+
+# 查看 iptables raw 表中本项目创建的链和跳转规则。
+sudo iptables -t raw -S | grep THREEX_ABUSE_GUARD
+
+# 查看本项目 iptables 链的详细包计数和已封禁 IP。
+sudo iptables -t raw -L THREEX_ABUSE_GUARD -n -v
 ```
 
 ## 从源码安装
