@@ -28,7 +28,7 @@ type PortScanConfig struct {
 	WindowMinutes   int  `yaml:"window_minutes"`
 	DistinctPorts   int  `yaml:"distinct_ports"`
 	Score           int  `yaml:"score"`
-	CooldownMinutes int `yaml:"cooldown_minutes"`
+	CooldownMinutes int  `yaml:"cooldown_minutes"`
 }
 
 type ConnectionRateConfig struct {

@@ -210,7 +210,7 @@ func runInstall(args []string) error {
 }
 
 func usage() {
-	fmt.Println(`3x-abuse-guard
+	fmt.Print(`3x-abuse-guard
 
 Commands:
   run                 Run the foreground daemon

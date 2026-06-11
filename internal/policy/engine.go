@@ -26,17 +26,17 @@ type Store interface {
 }
 
 type Config struct {
-	Window                  time.Duration
-	BlockDuration           time.Duration
-	TorrentBlockOnFirstHit  bool
-	TorrentDisableAfter     int
-	BlockedDisableAfter     int
-	BlockedNotifyAfter      int
-	BypassIPs               []string
-	ObserveOnly             bool
-	Detectors               detector.Config
-	Profiles                map[string]Profile
-	Assignments             Assignments
+	Window                 time.Duration
+	BlockDuration          time.Duration
+	TorrentBlockOnFirstHit bool
+	TorrentDisableAfter    int
+	BlockedDisableAfter    int
+	BlockedNotifyAfter     int
+	BypassIPs              []string
+	ObserveOnly            bool
+	Detectors              detector.Config
+	Profiles               map[string]Profile
+	Assignments            Assignments
 }
 
 type Profile struct {
@@ -64,7 +64,7 @@ type Engine struct {
 
 	mu       sync.Mutex
 	disabled map[string]time.Time
-	notified  map[string]time.Time
+	notified map[string]time.Time
 }
 
 func NewEngine(cfg Config, store Store, fw firewall.Firewall, panel Panel, notifier notify.Notifier, logger *log.Logger) *Engine {
@@ -94,7 +94,7 @@ func NewEngine(cfg Config, store Store, fw firewall.Firewall, panel Panel, notif
 		pipeline: pipeline,
 		profiles: profiles,
 		disabled: make(map[string]time.Time),
-		notified:  make(map[string]time.Time),
+		notified: make(map[string]time.Time),
 	}
 }
 

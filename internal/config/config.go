@@ -55,8 +55,8 @@ type FirewallConfig struct {
 }
 
 type PolicyConfig struct {
-	Mode                     string                         `yaml:"mode"`
-	WindowMinutes            int                            `yaml:"window_minutes"`
+	Mode                      string                         `yaml:"mode"`
+	WindowMinutes             int                            `yaml:"window_minutes"`
 	TorrentIPBlockOnFirstHit  bool                           `yaml:"torrent_ip_block_on_first_hit"`
 	TorrentDisableClientAfter int                            `yaml:"torrent_disable_client_after"`
 	BlockedDisableClientAfter int                            `yaml:"blocked_disable_client_after"`
@@ -114,9 +114,9 @@ func Default() Config {
 			BypassIPs:    []string{"127.0.0.1", "::1"},
 		},
 		Policy: PolicyConfig{
-			Mode:                     "balanced",
-			WindowMinutes:            60,
-			TorrentIPBlockOnFirstHit: true,
+			Mode:                      "balanced",
+			WindowMinutes:             60,
+			TorrentIPBlockOnFirstHit:  true,
 			TorrentDisableClientAfter: 2,
 			BlockedDisableClientAfter: 0,
 			BlockedNotifyAfter:        5,

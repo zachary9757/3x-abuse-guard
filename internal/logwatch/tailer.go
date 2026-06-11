@@ -11,7 +11,7 @@ import (
 
 type Tailer struct {
 	Path       string
-	PollEvery time.Duration
+	PollEvery  time.Duration
 	StartAtEnd bool
 }
 
@@ -41,8 +41,6 @@ func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
 		next, err := t.readFrom(offset, lines)
 		if err == nil {
 			offset = next
-		} else if errors.Is(err, errTruncated) {
-			offset = 0
 		}
 
 		select {
@@ -52,8 +50,6 @@ func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
 		}
 	}
 }
-
-var errTruncated = errors.New("file truncated")
 
 func (t Tailer) readFrom(offset int64, lines chan<- string) (int64, error) {
 	file, err := os.Open(t.Path)
@@ -67,7 +63,15 @@ func (t Tailer) readFrom(offset int64, lines chan<- string) (int64, error) {
 		return offset, err
 	}
 	if st.Size() < offset {
-		return offset, errTruncated
+		offset = 0
+	} else if offset > 0 {
+		ok, err := isLineBoundary(file, offset)
+		if err != nil {
+			return offset, err
+		}
+		if !ok {
+			offset = 0
+		}
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return offset, err
@@ -91,4 +95,16 @@ func (t Tailer) readFrom(offset int64, lines chan<- string) (int64, error) {
 		return offset, err
 	}
 	return pos, nil
+}
+
+func isLineBoundary(file *os.File, offset int64) (bool, error) {
+	if _, err := file.Seek(offset-1, io.SeekStart); err != nil {
+		return false, err
+	}
+	var previous [1]byte
+	n, err := file.Read(previous[:])
+	if err != nil {
+		return false, err
+	}
+	return n == 1 && previous[0] == '\n', nil
 }

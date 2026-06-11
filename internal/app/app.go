@@ -46,7 +46,7 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 		BypassIPs:              cfg.Firewall.BypassIPs,
 		Detectors:              cfg.Detectors,
 		Profiles:               policyProfiles(cfg),
-		Assignments:             policyAssignments(cfg),
+		Assignments:            policyAssignments(cfg),
 	}
 	switch cfg.Policy.Mode {
 	case "observe":
@@ -131,7 +131,7 @@ func (a *App) Run(ctx context.Context) error {
 	lines := make(chan string, 100)
 	tailer := logwatch.Tailer{
 		Path:       a.Config.Xray.AccessLog,
-		PollEvery: time.Second,
+		PollEvery:  time.Second,
 		StartAtEnd: true,
 	}
 	errCh := make(chan error, 1)

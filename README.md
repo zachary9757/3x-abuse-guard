@@ -309,8 +309,17 @@ sudo systemctl status 3x-abuse-guard --no-pager
 ## 开发
 
 ```bash
+go mod tidy
 go test ./...
 go build ./cmd/3x-abuse-guard
+```
+
+CI 使用 GitHub Actions 在干净环境执行 `go test ./...`。如果新增或升级依赖，提交前必须运行 `go mod tidy` 并把 `go.mod`、`go.sum` 一起提交，否则 CI 可能因为缺少间接依赖校验记录失败。
+
+在受限环境里测试时，可以把 Go 缓存放到临时目录：
+
+```bash
+GOCACHE=/tmp/3x-abuse-guard-go-cache GOPATH=/tmp/3x-abuse-guard-gopath go test ./...
 ```
 
 ## 许可证
@@ -428,9 +437,12 @@ This means:
 ## Development
 
 ```bash
+go mod tidy
 go test ./...
 go build ./cmd/3x-abuse-guard
 ```
+
+GitHub Actions runs `go test ./...` in a clean environment. When dependencies change, run `go mod tidy` and commit both `go.mod` and `go.sum`; otherwise CI can fail on missing indirect module checksums.
 
 ## License
 
