@@ -87,6 +87,8 @@ sudo systemctl enable --now 3x-abuse-guard
 | `--backend` | `iptables` | 防火墙后端，可选 `iptables`、`nft`、`noop`；`noop` 只记录事件，不封 IP。 |
 | `--mode` | `balanced` | 策略模式，可选 `balanced`、`strict`、`observe`。 |
 | `--webhook-url` | 空 | 通知 Webhook 地址，留空则不发送通知。 |
+| `--telegram-bot-token` | 空 | Telegram Bot Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`。 |
+| `--telegram-chat-id` | 空 | Telegram Chat ID；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`。 |
 | `--version` | `latest` | 指定安装的 GitHub Release 版本；没有 Release 时会回退源码构建。 |
 | `--install-dir` | `/usr/local/bin` | 二进制安装目录。 |
 | `--asset-url` | 空 | 指定二进制压缩包 URL，适合自建下载地址。 |
@@ -106,7 +108,7 @@ sudo systemctl enable --now 3x-abuse-guard
 - 支持 `iptables`、`nftables` 和 `noop` 防火墙后端。
 - 使用 bbolt 在 `/var/lib/3x-abuse-guard/state.db` 保存本地状态，服务重启后会恢复未过期封禁。
 - CLI 读写状态时短暂打开数据库，避免 daemon 运行期间 `status/unblock/test-event` 因 bbolt 文件锁超时。
-- 支持 Webhook 通知。
+- 支持 Webhook 和 Telegram Bot 通知。
 - 提供 `doctor` 检查 3x-ui API、access log、Xray outbound、routing 和 sniffing。
 - 提供 `print-xray-policy` 输出 3x-ui/Xray 需要加入的配置片段。
 - 支持 Detector Pipeline：`torrent`、`blocked`、`port_scan`、`connection_rate`。
@@ -221,6 +223,8 @@ policy:
 
 notify:
   webhook_url: ""
+  telegram_bot_token_env: "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN"
+  telegram_chat_id_env: "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID"
 
 state:
   path: "/var/lib/3x-abuse-guard/state.db"
@@ -264,21 +268,51 @@ logging:
 | `policy.assignments.inbounds` | 按 Xray inbound tag 指定 profile。 |
 | `policy.assignments.traffic` | 按检测器类型指定 profile，例如 `torrent`、`blocked`、`port_scan`、`connection_rate`。 |
 | `notify.webhook_url` | Webhook 通知地址，留空则关闭。 |
+| `notify.telegram_bot_token_env` | 从哪个环境变量读取 Telegram Bot Token。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`。 |
+| `notify.telegram_chat_id_env` | 从哪个环境变量读取 Telegram Chat ID。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`。 |
 | `state.path` | 本地状态数据库路径，用于记录事件和封禁。 |
 | `logging.dir` | 守护进程自身日志目录。systemd 日志仍可用 `journalctl` 查看。 |
 
 ## 通知和 Telegram
 
-当前版本支持通用 Webhook 通知：
+当前版本支持通用 Webhook 和 Telegram Bot 通知。两者可以同时配置，同时配置时会同时发送。
 
 ```yaml
 notify:
   webhook_url: "https://example.com/your-webhook"
+  telegram_bot_token_env: "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN"
+  telegram_chat_id_env: "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID"
 ```
 
 守护进程会向该 URL `POST` JSON 事件，包含 `action`、`kind`、`email`、`ip`、`reason`、`timestamp` 等字段。
 
-当前版本还没有内置 Telegram Bot 专用通知。Telegram Bot API 的 `sendMessage` 需要 `chat_id` 和 `text` 表单/JSON 参数，不能直接接收本项目当前的通用事件 JSON。要接 Telegram，暂时需要一个中间 Webhook 服务把本项目事件转换成 Telegram `sendMessage` 请求。
+Telegram 的 token 和 chat id 写在 `/etc/3x-abuse-guard/env`，不要写进 `config.yaml`：
+
+```text
+THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN=123456:ABC...
+THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID=123456789
+```
+
+也可以安装时直接传参：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
+  --auth-mode login \
+  --username "你的3x-ui面板用户名" \
+  --password "你的3x-ui面板密码" \
+  --panel-url "https://vmshell.188857.xyz:57501/zacxui/" \
+  --telegram-bot-token "你的Telegram Bot Token" \
+  --telegram-chat-id "你的Telegram Chat ID" \
+  --access-log "/var/log/x-ui/access.log" \
+  --backend iptables
+```
+
+配置完成后可以用模拟事件验证 Telegram 通知：
+
+```bash
+sudo systemctl restart 3x-abuse-guard
+sudo 3x-abuse-guardctl test-event --email test --ip 198.51.100.10 --tag TORRENT
+```
 
 ## 默认策略
 
@@ -407,6 +441,8 @@ THREEX_ABUSE_GUARD_TOKEN=your-token-here
 THREEX_ABUSE_GUARD_USERNAME=
 THREEX_ABUSE_GUARD_PASSWORD=
 THREEX_ABUSE_GUARD_2FA_CODE=
+THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN=
+THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID=
 ```
 
 启动守护进程：
@@ -489,6 +525,8 @@ THREEX_ABUSE_GUARD_TOKEN=your-token-here
 THREEX_ABUSE_GUARD_USERNAME=
 THREEX_ABUSE_GUARD_PASSWORD=
 THREEX_ABUSE_GUARD_2FA_CODE=
+THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN=
+THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID=
 ```
 
 Start the daemon:

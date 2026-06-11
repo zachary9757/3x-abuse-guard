@@ -69,9 +69,17 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 		panelClient = p
 	}
 
-	engine := policy.NewEngine(policyCfg, store, fw, panelClient, notify.NewWebhook(cfg.Notify.WebhookURL), logger)
+	engine := policy.NewEngine(policyCfg, store, fw, panelClient, newNotifier(cfg), logger)
 
 	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine}, nil
+}
+
+func newNotifier(cfg config.Config) notify.Notifier {
+	return notify.New(notify.Config{
+		WebhookURL:       cfg.Notify.WebhookURL,
+		TelegramBotToken: envValue(cfg.Notify.TelegramBotTokenEnv),
+		TelegramChatID:   envValue(cfg.Notify.TelegramChatIDEnv),
+	})
 }
 
 func policyProfiles(cfg config.Config) map[string]policy.Profile {

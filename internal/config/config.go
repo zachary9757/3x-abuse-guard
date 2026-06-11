@@ -79,7 +79,9 @@ type PolicyAssignmentsConfig struct {
 }
 
 type NotifyConfig struct {
-	WebhookURL string `yaml:"webhook_url"`
+	WebhookURL          string `yaml:"webhook_url"`
+	TelegramBotTokenEnv string `yaml:"telegram_bot_token_env"`
+	TelegramChatIDEnv   string `yaml:"telegram_chat_id_env"`
 }
 
 type StateConfig struct {
@@ -123,7 +125,10 @@ func Default() Config {
 			BlockedDisableClientAfter: 0,
 			BlockedNotifyAfter:        5,
 		},
-		Notify:  NotifyConfig{},
+		Notify: NotifyConfig{
+			TelegramBotTokenEnv: "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN",
+			TelegramChatIDEnv:   "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID",
+		},
 		State:   StateConfig{Path: DefaultStatePath},
 		Logging: LoggingConfig{Dir: DefaultLogDir},
 	}

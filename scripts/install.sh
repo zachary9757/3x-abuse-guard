@@ -18,6 +18,8 @@ XRAY_ACCESS_LOG="${XRAY_ACCESS_LOG:-/var/log/x-ui/access.log}"
 FIREWALL_BACKEND="${FIREWALL_BACKEND:-iptables}"
 POLICY_MODE="${POLICY_MODE:-balanced}"
 WEBHOOK_URL="${WEBHOOK_URL:-}"
+TELEGRAM_BOT_TOKEN="${THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID:-}"
 ASSET_URL="${ASSET_URL:-}"
 GO_VERSION="${GO_VERSION:-1.22.12}"
 START_SERVICE=1
@@ -46,6 +48,8 @@ usage() {
   --mode balanced|strict|observe
                              策略模式，默认 balanced
   --webhook-url URL          通知 webhook，默认空
+  --telegram-bot-token TOKEN Telegram Bot Token；也可用环境变量 THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN
+  --telegram-chat-id CHAT_ID Telegram Chat ID；也可用环境变量 THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID
   --version VERSION          安装版本，默认 latest
   --install-dir PATH         二进制安装目录，默认 /usr/local/bin
   --asset-url URL            指定 release 二进制压缩包 URL
@@ -134,6 +138,14 @@ parse_args() {
         ;;
       --webhook-url)
         WEBHOOK_URL="${2:-}"
+        shift 2
+        ;;
+      --telegram-bot-token)
+        TELEGRAM_BOT_TOKEN="${2:-}"
+        shift 2
+        ;;
+      --telegram-chat-id)
+        TELEGRAM_CHAT_ID="${2:-}"
         shift 2
         ;;
       --version)
@@ -438,6 +450,8 @@ policy:
 
 notify:
   webhook_url: "$WEBHOOK_URL"
+  telegram_bot_token_env: "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN"
+  telegram_chat_id_env: "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID"
 
 state:
   path: "$STATE_DIR/state.db"
@@ -451,6 +465,8 @@ EOF
   write_env_line "THREEX_ABUSE_GUARD_USERNAME" "$USERNAME"
   write_env_line "THREEX_ABUSE_GUARD_PASSWORD" "$PASSWORD"
   write_env_line "THREEX_ABUSE_GUARD_2FA_CODE" "$TWO_FACTOR_CODE"
+  write_env_line "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"
+  write_env_line "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID" "$TELEGRAM_CHAT_ID"
 
   chmod 600 "$CONFIG_DIR/config.yaml" "$CONFIG_DIR/env"
   log "已写入配置：$CONFIG_DIR/config.yaml"
