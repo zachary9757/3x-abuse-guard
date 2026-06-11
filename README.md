@@ -17,7 +17,7 @@ V1 刻意保持克制：
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
   --token "你的3x-ui API Token" \
-  --panel-url "http://127.0.0.1:2053/" \
+  --panel-url "https://你的域名:端口/面板路径/" \
   --access-log "/var/log/x-ui/access.log" \
   --backend iptables
 ```
@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
   --auth-mode login \
   --username "你的3x-ui面板用户名" \
   --password "你的3x-ui面板密码" \
-  --panel-url "http://127.0.0.1:2053/" \
+  --panel-url "https://你的域名:端口/面板路径/" \
   --access-log "/var/log/x-ui/access.log" \
   --backend iptables
 ```
@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
   --auth-mode login \
   --username "你的3x-ui面板用户名" \
   --password "你的3x-ui面板密码" \
-  --panel-url "https://127.0.0.1:2053/" \
+  --panel-url "https://你的域名:端口/面板路径/" \
   --panel-insecure-skip-verify \
   --access-log "/var/log/x-ui/access.log" \
   --backend iptables
@@ -72,28 +72,75 @@ sudo systemctl enable --now 3x-abuse-guard
 
 手动运行检查、状态、测试事件时，推荐用 `3x-abuse-guardctl`。它会自动加载 `/etc/3x-abuse-guard/env`，避免直接运行 `sudo 3x-abuse-guard doctor` 时缺少面板账号密码环境变量。
 
-### 安装脚本参数
+For manual checks, status inspection, and test events, prefer `3x-abuse-guardctl`. It automatically loads `/etc/3x-abuse-guard/env`, so commands such as `doctor`, `status`, `unblock`, and `test-event` can use the panel credentials written by the installer.
 
-| 参数 | 默认值 | 作用 |
+## 3x-abuse-guardctl 使用说明 / 3x-abuse-guardctl Usage
+
+`3x-abuse-guardctl` 是辅助命令，不是独立守护进程。它的作用是先读取 `/etc/3x-abuse-guard/env`，再调用 `/usr/local/bin/3x-abuse-guard` 执行真实子命令。
+
+`3x-abuse-guardctl` is a helper wrapper, not a separate daemon. It loads `/etc/3x-abuse-guard/env` first, then delegates to `/usr/local/bin/3x-abuse-guard`.
+
+| 命令 / Command | 作用 / Purpose |
+| --- | --- |
+| `sudo 3x-abuse-guardctl doctor` | 检查 access log、面板 API、Xray 出站、routing 和 sniffing 是否可用。 / Checks the access log, panel API, Xray outbounds, routing rules, and sniffing. |
+| `sudo 3x-abuse-guardctl status` | 查看当前封禁 IP 和最近风险事件；只读，不改配置。 / Shows active bans and recent risk events; read-only. |
+| `sudo 3x-abuse-guardctl unblock <ip>` | 手动解除指定 IP 的封禁，并删除本地 ban 记录。 / Manually unblocks an IP and removes the local ban record. |
+| `sudo 3x-abuse-guardctl test-event --email <email> --ip <ip> --tag <tag>` | 模拟一次日志命中，用于验证策略、封禁和通知链路。 / Simulates a log hit to verify policy, firewall, and notification behavior. |
+
+`test-event` 常用参数 / Common `test-event` options:
+
+| 参数 / Option | 示例 / Example | 说明 / Description |
 | --- | --- | --- |
-| `--panel-url` | `http://127.0.0.1:2053/` | 3x-ui 面板地址，必须是守护进程所在服务器能访问的地址。 |
-| `--auth-mode` | `auto` | 面板鉴权方式。`auto` 优先用 Token，缺少 Token 时用账号密码；也可以指定 `token` 或 `login`。 |
-| `--panel-insecure-skip-verify` | 关闭 | 跳过 3x-ui 面板 HTTPS 证书校验。仅建议用于本机自签证书或证书域名不匹配场景。 |
-| `--token` | 空 | 写入 3x-ui API Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 |
-| `--username` | 空 | 写入 3x-ui 面板用户名；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_USERNAME`。 |
-| `--password` | 空 | 写入 3x-ui 面板密码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_PASSWORD`。 |
-| `--two-factor-code` | 空 | 写入 3x-ui 两步验证码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_2FA_CODE`。 |
-| `--access-log` | `/var/log/x-ui/access.log` | Xray access log 路径，必须和 3x-ui/Xray 实际日志路径一致。 |
-| `--backend` | `iptables` | 防火墙后端，可选 `iptables`、`nft`、`noop`；`noop` 只记录事件，不封 IP。 |
-| `--mode` | `balanced` | 策略模式，可选 `balanced`、`strict`、`observe`。 |
-| `--webhook-url` | 空 | 通知 Webhook 地址，留空则不发送通知。 |
-| `--telegram-bot-token` | 空 | Telegram Bot Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`。 |
-| `--telegram-chat-id` | 空 | Telegram Chat ID；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`。 |
-| `--version` | `latest` | 指定安装的 GitHub Release 版本；没有 Release 时会回退源码构建。 |
-| `--install-dir` | `/usr/local/bin` | 二进制安装目录。 |
-| `--asset-url` | 空 | 指定二进制压缩包 URL，适合自建下载地址。 |
-| `--force-build` | 关闭 | 强制从源码构建，不尝试下载 Release。 |
-| `--no-start` | 关闭 | 只安装并写配置，不启动 systemd 服务。 |
+| `--email` | `alice@example.com` | 3x-ui client email；用于测试是否会累计到用户维度。 / 3x-ui client email; used to test per-client counting. |
+| `--ip` | `198.51.100.10` | 模拟违规来源 IP；建议使用文档保留地址，不要用自己的管理 IP。 / Simulated offender IP; use documentation-reserved addresses, not your admin IP. |
+| `--tag` | `TORRENT` 或 `blocked` | 模拟 Xray outbound tag。`TORRENT` 触发 BT 处置；`blocked` 触发高危访问计数。 / Simulated Xray outbound tag. `TORRENT` triggers torrent handling; `blocked` counts high-risk access. |
+
+常用示例 / Examples:
+
+```bash
+# 中文：检查整套配置是否可用。
+# English: Check whether the full setup is ready.
+sudo 3x-abuse-guardctl doctor
+
+# 中文：查看当前封禁和近期事件。
+# English: Show active bans and recent events.
+sudo 3x-abuse-guardctl status
+
+# 中文：模拟一次 BT 命中，验证封禁、状态和通知。
+# English: Simulate a torrent hit to verify blocking, state, and notifications.
+sudo 3x-abuse-guardctl test-event --email alice@example.com --ip 198.51.100.10 --tag TORRENT
+
+# 中文：解除测试 IP 的封禁。
+# English: Unblock the test IP.
+sudo 3x-abuse-guardctl unblock 198.51.100.10
+```
+
+### 安装脚本参数 / Installer Options
+
+示例中的 `https://你的域名:端口/面板路径/` 是占位地址，请替换成你的 3x-ui/Xpanel 面板真实访问地址。
+
+`https://your-domain:port/panel-path/` is a placeholder. Replace it with the real URL of your 3x-ui/Xpanel panel.
+
+| 参数 / Option | 默认值 / Default | 作用 / Description |
+| --- | --- | --- |
+| `--panel-url` | `http://127.0.0.1:2053/` | 3x-ui 面板地址，必须是守护进程所在服务器能访问的地址。 / 3x-ui panel URL reachable from the server running the daemon. |
+| `--auth-mode` | `auto` | 面板鉴权方式。`auto` 优先用 Token，缺少 Token 时用账号密码；也可以指定 `token` 或 `login`。 / Panel authentication mode. `auto` prefers token auth and falls back to login credentials; `token` and `login` are explicit modes. |
+| `--panel-insecure-skip-verify` | 关闭 / Off | 跳过 3x-ui 面板 HTTPS 证书校验。仅建议用于本机自签证书或证书域名不匹配场景。 / Skips HTTPS certificate verification for the panel. Only use for local self-signed certificates or certificate-name mismatch cases. |
+| `--token` | 空 / Empty | 写入 3x-ui API Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 / Writes the 3x-ui API token; you can also pre-set `THREEX_ABUSE_GUARD_TOKEN`. |
+| `--username` | 空 / Empty | 写入 3x-ui 面板用户名；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_USERNAME`。 / Writes the 3x-ui panel username; you can also pre-set `THREEX_ABUSE_GUARD_USERNAME`. |
+| `--password` | 空 / Empty | 写入 3x-ui 面板密码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_PASSWORD`。 / Writes the 3x-ui panel password; you can also pre-set `THREEX_ABUSE_GUARD_PASSWORD`. |
+| `--two-factor-code` | 空 / Empty | 写入 3x-ui 两步验证码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_2FA_CODE`。 / Writes the 3x-ui two-factor code; you can also pre-set `THREEX_ABUSE_GUARD_2FA_CODE`. |
+| `--access-log` | `/var/log/x-ui/access.log` | Xray access log 路径，必须和 3x-ui/Xray 实际日志路径一致。 / Xray access log path; it must match the path configured in 3x-ui/Xray. |
+| `--backend` | `iptables` | 防火墙后端，可选 `iptables`、`nft`、`noop`；`noop` 只记录事件，不封 IP。 / Firewall backend. Valid values are `iptables`, `nft`, and `noop`; `noop` records events without blocking IPs. |
+| `--mode` | `balanced` | 策略模式，可选 `balanced`、`strict`、`observe`。 / Policy mode. Valid values are `balanced`, `strict`, and `observe`. |
+| `--webhook-url` | 空 / Empty | 通知 Webhook 地址，留空则不发送 Webhook。 / Notification webhook URL; leave empty to disable webhook delivery. |
+| `--telegram-bot-token` | 空 / Empty | Telegram Bot Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`。 / Telegram Bot Token; you can also pre-set `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`. |
+| `--telegram-chat-id` | 空 / Empty | Telegram Chat ID；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`。 / Telegram Chat ID; you can also pre-set `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`. |
+| `--version` | `latest` | 指定安装的 GitHub Release 版本；没有 Release 时会回退源码构建。 / GitHub Release version to install; falls back to source build when no release asset is available. |
+| `--install-dir` | `/usr/local/bin` | 二进制安装目录。 / Binary installation directory. |
+| `--asset-url` | 空 / Empty | 指定二进制压缩包 URL，适合自建下载地址。 / Custom binary archive URL, useful for self-hosted downloads. |
+| `--force-build` | 关闭 / Off | 强制从源码构建，不尝试下载 Release。 / Forces a source build and skips release downloads. |
+| `--no-start` | 关闭 / Off | 只安装并写配置，不启动 systemd 服务。 / Installs files and writes config without starting the systemd service. |
 
 ## 已完成能力
 
@@ -300,7 +347,7 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
   --auth-mode login \
   --username "你的3x-ui面板用户名" \
   --password "你的3x-ui面板密码" \
-  --panel-url "https://vmshell.188857.xyz:57501/zacxui/" \
+  --panel-url "https://你的域名:端口/面板路径/" \
   --telegram-bot-token "你的Telegram Bot Token" \
   --telegram-chat-id "你的Telegram Chat ID" \
   --access-log "/var/log/x-ui/access.log" \
