@@ -22,6 +22,15 @@ func (p *fakePanel) DisableClient(_ context.Context, email string) error {
 	return nil
 }
 
+type recordingNotifier struct {
+	events []notify.Event
+}
+
+func (n *recordingNotifier) Notify(_ context.Context, event notify.Event) error {
+	n.events = append(n.events, event)
+	return nil
+}
+
 func TestTorrentBlocksAndDisablesAfterThreshold(t *testing.T) {
 	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -87,6 +96,53 @@ func TestBypassIP(t *testing.T) {
 	}
 }
 
+func TestScoreThresholdNotificationIncludesContext(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	notifier := &recordingNotifier{}
+	engine := NewEngine(Config{
+		Window:        time.Hour,
+		BlockDuration: time.Hour,
+		Profiles: map[string]Profile{
+			"default": {
+				Name:        "default",
+				NotifyScore: 10,
+			},
+		},
+	}, store, &firewall.Noop{}, nil, notifier, nil)
+
+	if err := engine.Handle(context.Background(), logwatch.Event{
+		Time:     time.Now(),
+		Kind:     logwatch.KindBlocked,
+		SourceIP: "198.51.100.10",
+		Email:    "alice",
+		Target:   "example.com:22",
+		Inbound:  "inbound-1",
+		Outbound: "blocked",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifier.events) != 1 {
+		t.Fatalf("events = %v", notifier.events)
+	}
+	got := notifier.events[0]
+	if got.Action != "score_threshold" || got.Kind != "blocked" {
+		t.Fatalf("event action/kind = %s/%s", got.Action, got.Kind)
+	}
+	if got.Score != 10 || got.Threshold != 10 || got.Profile != "default" {
+		t.Fatalf("event score/threshold/profile = %d/%d/%s", got.Score, got.Threshold, got.Profile)
+	}
+	if got.Email != "alice" || got.IP != "198.51.100.10" || got.Target != "example.com:22" {
+		t.Fatalf("event actor context = email:%s ip:%s target:%s", got.Email, got.IP, got.Target)
+	}
+	if got.Inbound != "inbound-1" || got.Outbound != "blocked" {
+		t.Fatalf("event route context = inbound:%s outbound:%s", got.Inbound, got.Outbound)
+	}
+}
+
 func TestPortScanDetectorBlocksAfterDistinctPorts(t *testing.T) {
 	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -94,6 +150,7 @@ func TestPortScanDetectorBlocksAfterDistinctPorts(t *testing.T) {
 	}
 	defer store.Close()
 	fw := &firewall.Noop{}
+	notifier := &recordingNotifier{}
 	engine := NewEngine(Config{
 		Window:        time.Hour,
 		BlockDuration: time.Hour,
@@ -109,7 +166,7 @@ func TestPortScanDetectorBlocksAfterDistinctPorts(t *testing.T) {
 				Score:   60,
 			},
 		},
-	}, store, fw, nil, notify.Noop{}, nil)
+	}, store, fw, nil, notifier, nil)
 
 	for _, target := range []string{"example.com:22", "example.com:23", "example.com:445"} {
 		if err := engine.Handle(context.Background(), logwatch.Event{
@@ -117,11 +174,26 @@ func TestPortScanDetectorBlocksAfterDistinctPorts(t *testing.T) {
 			Kind:     logwatch.KindNormal,
 			SourceIP: "198.51.100.10",
 			Target:   target,
+			Inbound:  "inbound-1",
+			Outbound: "direct",
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if len(fw.Blocked) != 1 || fw.Blocked[0] != "198.51.100.10" {
 		t.Fatalf("blocked = %v", fw.Blocked)
+	}
+	if len(notifier.events) != 1 {
+		t.Fatalf("events = %v", notifier.events)
+	}
+	got := notifier.events[0]
+	if got.Action != "ip_blocked" || got.Kind != "port_scan" {
+		t.Fatalf("event action/kind = %s/%s", got.Action, got.Kind)
+	}
+	if got.Score != 80 || got.Threshold != 80 || got.Profile != "default" {
+		t.Fatalf("event score/threshold/profile = %d/%d/%s", got.Score, got.Threshold, got.Profile)
+	}
+	if got.Target != "example.com:445" || got.Inbound != "inbound-1" || got.Outbound != "direct" {
+		t.Fatalf("event context = target:%s inbound:%s outbound:%s", got.Target, got.Inbound, got.Outbound)
 	}
 }

@@ -142,20 +142,24 @@ func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding de
 	}
 
 	if profile.NotifyScore > 0 && total >= profile.NotifyScore {
-		e.notifyOnce(ctx, ev, finding.Kind, fmt.Sprintf("%s score threshold reached: %d", profile.Name, total), finding.CreatedAt)
+		e.notifyOnce(ctx, ev, finding, profile, total, profile.NotifyScore, fmt.Sprintf("%s score threshold reached: %d", profile.Name, total), finding.CreatedAt)
 	}
 	if !e.cfg.ObserveOnly && (finding.BlockIP || (profile.BlockIPScore > 0 && total >= profile.BlockIPScore)) {
-		if err := e.blockIP(ctx, ev, finding.Kind, finding.Reason); err != nil {
+		threshold := profile.BlockIPScore
+		if threshold == 0 && finding.BlockIP {
+			threshold = finding.Score
+		}
+		if err := e.blockIP(ctx, ev, finding, profile, total, threshold); err != nil {
 			return err
 		}
 	}
 	if !e.cfg.ObserveOnly && ev.Email != "" && e.panel != nil && profile.DisableClientScore > 0 && total >= profile.DisableClientScore {
-		return e.disableClientOnce(ctx, ev.Email, fmt.Sprintf("%s score threshold reached: %d", finding.Kind, total))
+		return e.disableClientOnce(ctx, ev, finding, profile, total, profile.DisableClientScore, fmt.Sprintf("%s score threshold reached: %d", finding.Kind, total))
 	}
 	return nil
 }
 
-func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, kind string, reason string) error {
+func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, finding detector.Finding, profile Profile, score int, threshold int) error {
 	expiresAt := time.Now().Add(e.cfg.BlockDuration)
 	if err := e.fw.Block(ctx, ev.SourceIP); err != nil {
 		return err
@@ -164,26 +168,19 @@ func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, kind string, re
 	if err := e.store.UpsertBan(state.BanRecord{
 		IP:        ev.SourceIP,
 		Email:     ev.Email,
-		Reason:    reason,
+		Reason:    finding.Reason,
 		CreatedAt: time.Now(),
 		ExpiresAt: expiresAt,
 	}); err != nil {
 		return err
 	}
-	_ = e.notifier.Notify(ctx, notify.Event{
-		Action:    "ip_blocked",
-		Kind:      kind,
-		Email:     ev.Email,
-		IP:        ev.SourceIP,
-		Reason:    reason,
-		Timestamp: time.Now(),
-	})
-	e.logger.Printf("blocked ip=%s email=%s reason=%s until=%s", ev.SourceIP, ev.Email, reason, expiresAt.Format(time.RFC3339))
+	_ = e.notifier.Notify(ctx, notificationEvent("ip_blocked", ev, finding, profile, score, threshold, finding.Reason, time.Now()))
+	e.logger.Printf("blocked ip=%s email=%s reason=%s until=%s", ev.SourceIP, ev.Email, finding.Reason, expiresAt.Format(time.RFC3339))
 	return nil
 }
 
-func (e *Engine) notifyOnce(ctx context.Context, ev logwatch.Event, kind string, reason string, now time.Time) {
-	key := actorKey(ev) + ":" + kind + ":notify"
+func (e *Engine) notifyOnce(ctx context.Context, ev logwatch.Event, finding detector.Finding, profile Profile, score int, threshold int, reason string, now time.Time) {
+	key := actorKey(ev) + ":" + finding.Kind + ":notify"
 	e.mu.Lock()
 	last, ok := e.notified[key]
 	if ok && now.Sub(last) < e.cfg.Window {
@@ -193,37 +190,42 @@ func (e *Engine) notifyOnce(ctx context.Context, ev logwatch.Event, kind string,
 	e.notified[key] = now
 	e.mu.Unlock()
 
-	_ = e.notifier.Notify(ctx, notify.Event{
-		Action:    "score_threshold",
-		Kind:      kind,
-		Email:     ev.Email,
-		IP:        ev.SourceIP,
-		Reason:    reason,
-		Timestamp: now,
-	})
+	_ = e.notifier.Notify(ctx, notificationEvent("score_threshold", ev, finding, profile, score, threshold, reason, now))
 }
 
-func (e *Engine) disableClientOnce(ctx context.Context, email string, reason string) error {
+func (e *Engine) disableClientOnce(ctx context.Context, ev logwatch.Event, finding detector.Finding, profile Profile, score int, threshold int, reason string) error {
 	e.mu.Lock()
-	last, ok := e.disabled[email]
+	last, ok := e.disabled[ev.Email]
 	if ok && time.Since(last) < e.cfg.Window {
 		e.mu.Unlock()
 		return nil
 	}
-	e.disabled[email] = time.Now()
+	e.disabled[ev.Email] = time.Now()
 	e.mu.Unlock()
 
-	if err := e.panel.DisableClient(ctx, email); err != nil {
+	if err := e.panel.DisableClient(ctx, ev.Email); err != nil {
 		return err
 	}
-	_ = e.notifier.Notify(ctx, notify.Event{
-		Action:    "client_disabled",
-		Email:     email,
-		Reason:    reason,
-		Timestamp: time.Now(),
-	})
-	e.logger.Printf("disabled client email=%s reason=%s", email, reason)
+	_ = e.notifier.Notify(ctx, notificationEvent("client_disabled", ev, finding, profile, score, threshold, reason, time.Now()))
+	e.logger.Printf("disabled client email=%s reason=%s", ev.Email, reason)
 	return nil
+}
+
+func notificationEvent(action string, ev logwatch.Event, finding detector.Finding, profile Profile, score int, threshold int, reason string, timestamp time.Time) notify.Event {
+	return notify.Event{
+		Action:    action,
+		Kind:      finding.Kind,
+		Email:     ev.Email,
+		IP:        ev.SourceIP,
+		Reason:    reason,
+		Profile:   profile.Name,
+		Score:     score,
+		Threshold: threshold,
+		Target:    ev.Target,
+		Inbound:   ev.Inbound,
+		Outbound:  ev.Outbound,
+		Timestamp: timestamp,
+	}
 }
 
 func (e *Engine) isBypassed(ip string) bool {

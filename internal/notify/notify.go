@@ -17,6 +17,12 @@ type Event struct {
 	Email     string    `json:"email,omitempty"`
 	IP        string    `json:"ip,omitempty"`
 	Reason    string    `json:"reason,omitempty"`
+	Profile   string    `json:"profile,omitempty"`
+	Score     int       `json:"score,omitempty"`
+	Threshold int       `json:"threshold,omitempty"`
+	Target    string    `json:"target,omitempty"`
+	Inbound   string    `json:"inbound,omitempty"`
+	Outbound  string    `json:"outbound,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -176,31 +182,90 @@ func (t *Telegram) Notify(ctx context.Context, event Event) error {
 }
 
 func formatTelegramText(event Event) string {
-	action := event.Action
-	switch event.Action {
-	case "ip_blocked":
-		action = "IP封禁"
-	case "score_threshold":
-		action = "风险通知"
-	case "client_disabled":
-		action = "用户禁用"
-	}
 	lines := []string{
-		"3x-abuse-guard 通知",
-		"动作: " + action,
-	}
-	if event.Kind != "" {
-		lines = append(lines, "类型: "+event.Kind)
+		"3x-abuse-guard - " + actionLabel(event.Action),
+		"",
+		"结论: " + conclusionText(event),
 	}
 	if event.Email != "" {
 		lines = append(lines, "用户: "+event.Email)
 	}
 	if event.IP != "" {
-		lines = append(lines, "IP: "+event.IP)
+		lines = append(lines, "来源 IP: "+event.IP)
+	}
+	if event.Kind != "" {
+		lines = append(lines, "风险类型: "+event.Kind)
+	}
+	if event.Score > 0 && event.Threshold > 0 {
+		lines = append(lines, fmt.Sprintf("累计分数: %d / %d", event.Score, event.Threshold))
+	} else if event.Score > 0 {
+		lines = append(lines, fmt.Sprintf("累计分数: %d", event.Score))
+	}
+	if event.Profile != "" {
+		lines = append(lines, "策略: "+event.Profile)
+	}
+	if event.Target != "" {
+		lines = append(lines, "目标: "+event.Target)
+	}
+	if event.Inbound != "" {
+		lines = append(lines, "入站: "+event.Inbound)
+	}
+	if event.Outbound != "" {
+		lines = append(lines, "出站: "+event.Outbound)
 	}
 	if event.Reason != "" {
-		lines = append(lines, "原因: "+event.Reason)
+		lines = append(lines, "说明: "+reasonText(event.Reason))
 	}
 	lines = append(lines, "时间: "+event.Timestamp.Format(time.RFC3339))
 	return strings.Join(lines, "\n")
+}
+
+func actionLabel(action string) string {
+	switch action {
+	case "ip_blocked":
+		return "IP封禁"
+	case "score_threshold":
+		return "风险通知"
+	case "client_disabled":
+		return "用户禁用"
+	default:
+		if action == "" {
+			return "通知"
+		}
+		return action
+	}
+}
+
+func conclusionText(event Event) string {
+	kind := event.Kind
+	if kind == "" {
+		kind = "风险"
+	}
+	switch event.Action {
+	case "score_threshold":
+		return kind + " 风险已达到通知阈值"
+	case "ip_blocked":
+		return "来源 IP 已因 " + kind + " 风险被封禁"
+	case "client_disabled":
+		return "用户已因 " + kind + " 风险被禁用"
+	default:
+		return "收到 " + kind + " 风险事件"
+	}
+}
+
+func reasonText(reason string) string {
+	switch {
+	case reason == "blocked outbound hit":
+		return "命中 blocked 高风险出站规则"
+	case reason == "torrent outbound hit":
+		return "命中 TORRENT 种子/BT 出站规则"
+	case strings.HasPrefix(reason, "distinct destination ports in window:"):
+		return "同一来源在统计窗口内访问了过多不同目标端口"
+	case strings.HasPrefix(reason, "connections in window:"):
+		return "同一用户或 IP 在统计窗口内连接数过高"
+	case strings.Contains(reason, "score threshold reached"):
+		return "累计风险分达到策略阈值"
+	default:
+		return reason
+	}
 }

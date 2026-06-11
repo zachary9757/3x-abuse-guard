@@ -34,11 +34,17 @@ func TestTelegramNotifySendsMessage(t *testing.T) {
 		Client:     server.Client(),
 	}
 	err := notifier.Notify(context.Background(), Event{
-		Action:    "ip_blocked",
-		Kind:      "torrent",
+		Action:    "score_threshold",
+		Kind:      "blocked",
 		Email:     "alice",
 		IP:        "198.51.100.10",
-		Reason:    "torrent outbound hit",
+		Reason:    "blocked outbound hit",
+		Profile:   "default",
+		Score:     50,
+		Threshold: 50,
+		Target:    "example.com:22",
+		Inbound:   "inbound-1",
+		Outbound:  "blocked",
 		Timestamp: time.Date(2026, 6, 11, 1, 2, 3, 0, time.UTC),
 	})
 	if err != nil {
@@ -50,7 +56,19 @@ func TestTelegramNotifySendsMessage(t *testing.T) {
 	if !got.DisableWebPagePreview {
 		t.Fatal("expected disabled previews")
 	}
-	for _, want := range []string{"IP封禁", "torrent", "alice", "198.51.100.10", "torrent outbound hit"} {
+	for _, want := range []string{
+		"3x-abuse-guard - 风险通知",
+		"结论: blocked 风险已达到通知阈值",
+		"用户: alice",
+		"来源 IP: 198.51.100.10",
+		"风险类型: blocked",
+		"累计分数: 50 / 50",
+		"策略: default",
+		"目标: example.com:22",
+		"入站: inbound-1",
+		"出站: blocked",
+		"说明: 命中 blocked 高风险出站规则",
+	} {
 		if !strings.Contains(got.Text, want) {
 			t.Fatalf("message %q missing %q", got.Text, want)
 		}
