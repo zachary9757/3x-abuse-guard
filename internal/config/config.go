@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/zachary9757/3x-abuse-guard/internal/detector"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,13 +18,14 @@ const (
 )
 
 type Config struct {
-	Panel    PanelConfig    `yaml:"panel"`
-	Xray     XrayConfig     `yaml:"xray"`
-	Firewall FirewallConfig `yaml:"firewall"`
-	Policy   PolicyConfig   `yaml:"policy"`
-	Notify   NotifyConfig   `yaml:"notify"`
-	State    StateConfig    `yaml:"state"`
-	Logging  LoggingConfig  `yaml:"logging"`
+	Panel     PanelConfig     `yaml:"panel"`
+	Xray      XrayConfig      `yaml:"xray"`
+	Detectors DetectorsConfig `yaml:"detectors"`
+	Firewall  FirewallConfig  `yaml:"firewall"`
+	Policy    PolicyConfig    `yaml:"policy"`
+	Notify    NotifyConfig    `yaml:"notify"`
+	State     StateConfig     `yaml:"state"`
+	Logging   LoggingConfig   `yaml:"logging"`
 }
 
 type PanelConfig struct {
@@ -43,6 +45,8 @@ type XrayConfig struct {
 	BlockedTag string `yaml:"blocked_tag"`
 }
 
+type DetectorsConfig = detector.Config
+
 type FirewallConfig struct {
 	Backend      string   `yaml:"backend"`
 	Chain        string   `yaml:"chain"`
@@ -51,12 +55,26 @@ type FirewallConfig struct {
 }
 
 type PolicyConfig struct {
-	Mode                    string `yaml:"mode"`
-	WindowMinutes           int    `yaml:"window_minutes"`
-	TorrentIPBlockOnFirstHit bool   `yaml:"torrent_ip_block_on_first_hit"`
-	TorrentDisableClientAfter int   `yaml:"torrent_disable_client_after"`
-	BlockedDisableClientAfter int   `yaml:"blocked_disable_client_after"`
-	BlockedNotifyAfter        int   `yaml:"blocked_notify_after"`
+	Mode                     string                         `yaml:"mode"`
+	WindowMinutes            int                            `yaml:"window_minutes"`
+	TorrentIPBlockOnFirstHit  bool                           `yaml:"torrent_ip_block_on_first_hit"`
+	TorrentDisableClientAfter int                            `yaml:"torrent_disable_client_after"`
+	BlockedDisableClientAfter int                            `yaml:"blocked_disable_client_after"`
+	BlockedNotifyAfter        int                            `yaml:"blocked_notify_after"`
+	Profiles                  map[string]PolicyProfileConfig `yaml:"profiles,omitempty"`
+	Assignments               PolicyAssignmentsConfig        `yaml:"assignments,omitempty"`
+}
+
+type PolicyProfileConfig struct {
+	NotifyScore        int `yaml:"notify_score"`
+	BlockIPScore       int `yaml:"block_ip_score"`
+	DisableClientScore int `yaml:"disable_client_score"`
+}
+
+type PolicyAssignmentsConfig struct {
+	Emails   map[string]string `yaml:"emails,omitempty"`
+	Inbounds map[string]string `yaml:"inbounds,omitempty"`
+	Traffic  map[string]string `yaml:"traffic,omitempty"`
 }
 
 type NotifyConfig struct {
@@ -88,6 +106,7 @@ func Default() Config {
 			TorrentTag: "TORRENT",
 			BlockedTag: "blocked",
 		},
+		Detectors: detector.DefaultConfig(),
 		Firewall: FirewallConfig{
 			Backend:      "iptables",
 			Chain:        "THREEX_ABUSE_GUARD",

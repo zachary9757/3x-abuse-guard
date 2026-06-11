@@ -373,6 +373,27 @@ xray:
   torrent_tag: "TORRENT"
   blocked_tag: "blocked"
 
+detectors:
+  torrent:
+    enabled: true
+    score: 100
+    block_ip_on_hit: true
+  blocked:
+    enabled: true
+    score: 10
+  port_scan:
+    enabled: true
+    window_minutes: 5
+    distinct_ports: 8
+    score: 80
+    cooldown_minutes: 5
+  connection_rate:
+    enabled: true
+    window_minutes: 5
+    max_connections: 300
+    score: 60
+    cooldown_minutes: 5
+
 firewall:
   backend: "$FIREWALL_BACKEND"
   chain: "THREEX_ABUSE_GUARD"

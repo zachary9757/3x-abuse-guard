@@ -25,6 +25,9 @@ type Store struct {
 type EventRecord struct {
 	ID        uint64    `json:"id"`
 	Kind      string    `json:"kind"`
+	Score     int       `json:"score,omitempty"`
+	Profile   string    `json:"profile,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
 	Email     string    `json:"email"`
 	SourceIP  string    `json:"source_ip"`
 	Target    string    `json:"target"`
@@ -115,6 +118,32 @@ func (s *Store) CountEvents(email string, kind string, since time.Time) (int, er
 		})
 	})
 	return count, err
+}
+
+func (s *Store) SumScores(email string, sourceIP string, since time.Time) (int, error) {
+	total := 0
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		return tx.Bucket(eventsBucket).ForEach(func(_, v []byte) error {
+			var rec EventRecord
+			if err := json.Unmarshal(v, &rec); err != nil {
+				return err
+			}
+			if rec.CreatedAt.Before(since) {
+				return nil
+			}
+			if email != "" {
+				if rec.Email == email {
+					total += rec.Score
+				}
+				return nil
+			}
+			if rec.SourceIP == sourceIP {
+				total += rec.Score
+			}
+			return nil
+		})
+	})
+	return total, err
 }
 
 func (s *Store) RecentEvents(limit int) ([]EventRecord, error) {

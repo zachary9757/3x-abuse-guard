@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zachary9757/3x-abuse-guard/internal/detector"
 	"github.com/zachary9757/3x-abuse-guard/internal/firewall"
 	"github.com/zachary9757/3x-abuse-guard/internal/logwatch"
 	"github.com/zachary9757/3x-abuse-guard/internal/notify"
@@ -82,6 +83,45 @@ func TestBypassIP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(fw.Blocked) != 0 {
+		t.Fatalf("blocked = %v", fw.Blocked)
+	}
+}
+
+func TestPortScanDetectorBlocksAfterDistinctPorts(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fw := &firewall.Noop{}
+	engine := NewEngine(Config{
+		Window:        time.Hour,
+		BlockDuration: time.Hour,
+		Detectors: detector.Config{
+			PortScan: detector.PortScanConfig{
+				Enabled:       true,
+				WindowMinutes: 5,
+				DistinctPorts: 3,
+				Score:         80,
+			},
+			ConnectionRate: detector.ConnectionRateConfig{
+				Enabled: false,
+				Score:   60,
+			},
+		},
+	}, store, fw, nil, notify.Noop{}, nil)
+
+	for _, target := range []string{"example.com:22", "example.com:23", "example.com:445"} {
+		if err := engine.Handle(context.Background(), logwatch.Event{
+			Time:     time.Now(),
+			Kind:     logwatch.KindNormal,
+			SourceIP: "198.51.100.10",
+			Target:   target,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(fw.Blocked) != 1 || fw.Blocked[0] != "198.51.100.10" {
 		t.Fatalf("blocked = %v", fw.Blocked)
 	}
 }

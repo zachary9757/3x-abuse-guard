@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zachary9757/3x-abuse-guard/internal/detector"
 	"github.com/zachary9757/3x-abuse-guard/internal/firewall"
 	"github.com/zachary9757/3x-abuse-guard/internal/logwatch"
 	"github.com/zachary9757/3x-abuse-guard/internal/notify"
@@ -20,7 +21,7 @@ type Panel interface {
 
 type Store interface {
 	RecordEvent(rec state.EventRecord) (state.EventRecord, error)
-	CountEvents(email string, kind string, since time.Time) (int, error)
+	SumScores(email string, sourceIP string, since time.Time) (int, error)
 	UpsertBan(rec state.BanRecord) error
 }
 
@@ -32,6 +33,23 @@ type Config struct {
 	BlockedDisableAfter     int
 	BlockedNotifyAfter      int
 	BypassIPs               []string
+	ObserveOnly             bool
+	Detectors               detector.Config
+	Profiles                map[string]Profile
+	Assignments             Assignments
+}
+
+type Profile struct {
+	Name               string
+	NotifyScore        int
+	BlockIPScore       int
+	DisableClientScore int
+}
+
+type Assignments struct {
+	Emails   map[string]string
+	Inbounds map[string]string
+	Traffic  map[string]string
 }
 
 type Engine struct {
@@ -41,9 +59,12 @@ type Engine struct {
 	panel    Panel
 	notifier notify.Notifier
 	logger   *log.Logger
+	pipeline *detector.Pipeline
+	profiles map[string]Profile
 
 	mu       sync.Mutex
 	disabled map[string]time.Time
+	notified  map[string]time.Time
 }
 
 func NewEngine(cfg Config, store Store, fw firewall.Firewall, panel Panel, notifier notify.Notifier, logger *log.Logger) *Engine {
@@ -59,6 +80,10 @@ func NewEngine(cfg Config, store Store, fw firewall.Firewall, panel Panel, notif
 	if logger == nil {
 		logger = log.Default()
 	}
+	cfg.Detectors.Torrent.BlockIPOnHit = cfg.TorrentBlockOnFirstHit
+	pipeline := detector.NewPipeline(cfg.Detectors)
+	cfg.Detectors = pipeline.Config()
+	profiles := normalizeProfiles(cfg)
 	return &Engine{
 		cfg:      cfg,
 		store:    store,
@@ -66,90 +91,71 @@ func NewEngine(cfg Config, store Store, fw firewall.Firewall, panel Panel, notif
 		panel:    panel,
 		notifier: notifier,
 		logger:   logger,
+		pipeline: pipeline,
+		profiles: profiles,
 		disabled: make(map[string]time.Time),
+		notified:  make(map[string]time.Time),
 	}
 }
 
 func (e *Engine) Handle(ctx context.Context, ev logwatch.Event) error {
-	if ev.Kind != logwatch.KindTorrent && ev.Kind != logwatch.KindBlocked {
-		return nil
-	}
 	if e.isBypassed(ev.SourceIP) {
 		e.logger.Printf("skip bypassed ip %s for %s", ev.SourceIP, ev.Kind)
 		return nil
 	}
 
-	now := time.Now()
 	if ev.Time.IsZero() {
-		ev.Time = now
+		ev.Time = time.Now()
 	}
+	findings := e.pipeline.Detect(ev, ev.Time)
+	if len(findings) == 0 {
+		return nil
+	}
+	for _, finding := range findings {
+		if err := e.applyFinding(ctx, ev, finding); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding detector.Finding) error {
+	profile := e.profileFor(ev, finding.Kind)
 	if _, err := e.store.RecordEvent(state.EventRecord{
-		Kind:      string(ev.Kind),
+		Kind:      finding.Kind,
+		Score:     finding.Score,
+		Profile:   profile.Name,
+		Reason:    finding.Reason,
 		Email:     ev.Email,
 		SourceIP:  ev.SourceIP,
 		Target:    ev.Target,
 		Inbound:   ev.Inbound,
 		Outbound:  ev.Outbound,
-		CreatedAt: ev.Time,
+		CreatedAt: finding.CreatedAt,
 		Raw:       ev.Raw,
 	}); err != nil {
 		return err
 	}
-
-	switch ev.Kind {
-	case logwatch.KindTorrent:
-		return e.handleTorrent(ctx, ev, now)
-	case logwatch.KindBlocked:
-		return e.handleBlocked(ctx, ev, now)
-	default:
-		return nil
+	total, err := e.store.SumScores(ev.Email, ev.SourceIP, finding.CreatedAt.Add(-e.cfg.Window))
+	if err != nil {
+		return err
 	}
-}
 
-func (e *Engine) handleTorrent(ctx context.Context, ev logwatch.Event, now time.Time) error {
-	if e.cfg.TorrentBlockOnFirstHit {
-		if err := e.blockIP(ctx, ev, "torrent"); err != nil {
+	if profile.NotifyScore > 0 && total >= profile.NotifyScore {
+		e.notifyOnce(ctx, ev, finding.Kind, fmt.Sprintf("%s score threshold reached: %d", profile.Name, total), finding.CreatedAt)
+	}
+	if !e.cfg.ObserveOnly && (finding.BlockIP || (profile.BlockIPScore > 0 && total >= profile.BlockIPScore)) {
+		if err := e.blockIP(ctx, ev, finding.Kind, finding.Reason); err != nil {
 			return err
 		}
 	}
-	if ev.Email == "" || e.cfg.TorrentDisableAfter <= 0 || e.panel == nil {
-		return nil
-	}
-	count, err := e.store.CountEvents(ev.Email, string(logwatch.KindTorrent), now.Add(-e.cfg.Window))
-	if err != nil {
-		return err
-	}
-	if count >= e.cfg.TorrentDisableAfter {
-		return e.disableClientOnce(ctx, ev.Email, "torrent threshold reached")
+	if !e.cfg.ObserveOnly && ev.Email != "" && e.panel != nil && profile.DisableClientScore > 0 && total >= profile.DisableClientScore {
+		return e.disableClientOnce(ctx, ev.Email, fmt.Sprintf("%s score threshold reached: %d", finding.Kind, total))
 	}
 	return nil
 }
 
-func (e *Engine) handleBlocked(ctx context.Context, ev logwatch.Event, now time.Time) error {
-	if ev.Email == "" {
-		return nil
-	}
-	count, err := e.store.CountEvents(ev.Email, string(logwatch.KindBlocked), now.Add(-e.cfg.Window))
-	if err != nil {
-		return err
-	}
-	if e.cfg.BlockedNotifyAfter > 0 && count >= e.cfg.BlockedNotifyAfter {
-		_ = e.notifier.Notify(ctx, notify.Event{
-			Action:    "blocked_threshold",
-			Kind:      string(ev.Kind),
-			Email:     ev.Email,
-			IP:        ev.SourceIP,
-			Reason:    fmt.Sprintf("blocked threshold reached: %d", count),
-			Timestamp: now,
-		})
-	}
-	if e.cfg.BlockedDisableAfter > 0 && e.panel != nil && count >= e.cfg.BlockedDisableAfter {
-		return e.disableClientOnce(ctx, ev.Email, "blocked threshold reached")
-	}
-	return nil
-}
-
-func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, reason string) error {
+func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, kind string, reason string) error {
 	expiresAt := time.Now().Add(e.cfg.BlockDuration)
 	if err := e.fw.Block(ctx, ev.SourceIP); err != nil {
 		return err
@@ -166,7 +172,7 @@ func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, reason string) 
 	}
 	_ = e.notifier.Notify(ctx, notify.Event{
 		Action:    "ip_blocked",
-		Kind:      string(ev.Kind),
+		Kind:      kind,
 		Email:     ev.Email,
 		IP:        ev.SourceIP,
 		Reason:    reason,
@@ -174,6 +180,27 @@ func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, reason string) 
 	})
 	e.logger.Printf("blocked ip=%s email=%s reason=%s until=%s", ev.SourceIP, ev.Email, reason, expiresAt.Format(time.RFC3339))
 	return nil
+}
+
+func (e *Engine) notifyOnce(ctx context.Context, ev logwatch.Event, kind string, reason string, now time.Time) {
+	key := actorKey(ev) + ":" + kind + ":notify"
+	e.mu.Lock()
+	last, ok := e.notified[key]
+	if ok && now.Sub(last) < e.cfg.Window {
+		e.mu.Unlock()
+		return
+	}
+	e.notified[key] = now
+	e.mu.Unlock()
+
+	_ = e.notifier.Notify(ctx, notify.Event{
+		Action:    "score_threshold",
+		Kind:      kind,
+		Email:     ev.Email,
+		IP:        ev.SourceIP,
+		Reason:    reason,
+		Timestamp: now,
+	})
 }
 
 func (e *Engine) disableClientOnce(ctx context.Context, email string, reason string) error {
@@ -216,4 +243,83 @@ func (e *Engine) isBypassed(ip string) bool {
 		}
 	}
 	return false
+}
+
+func (e *Engine) profileFor(ev logwatch.Event, kind string) Profile {
+	if name := e.cfg.Assignments.Emails[ev.Email]; name != "" {
+		return e.profileByName(name)
+	}
+	if name := e.cfg.Assignments.Inbounds[ev.Inbound]; name != "" {
+		return e.profileByName(name)
+	}
+	if name := e.cfg.Assignments.Traffic[kind]; name != "" {
+		return e.profileByName(name)
+	}
+	return e.profileByName("default")
+}
+
+func (e *Engine) profileByName(name string) Profile {
+	if profile, ok := e.profiles[name]; ok {
+		return profile
+	}
+	return e.profiles["default"]
+}
+
+func normalizeProfiles(cfg Config) map[string]Profile {
+	profiles := map[string]Profile{}
+	for name, profile := range cfg.Profiles {
+		if profile.Name == "" {
+			profile.Name = name
+		}
+		profiles[name] = profile
+	}
+	if _, ok := profiles["default"]; !ok {
+		profiles["default"] = defaultProfile(cfg)
+	}
+	if cfg.ObserveOnly {
+		for name, profile := range profiles {
+			profile.BlockIPScore = 0
+			profile.DisableClientScore = 0
+			profiles[name] = profile
+		}
+	}
+	return profiles
+}
+
+func defaultProfile(cfg Config) Profile {
+	torrentScore := cfg.Detectors.Torrent.Score
+	if torrentScore <= 0 {
+		torrentScore = 100
+	}
+	blockedScore := cfg.Detectors.Blocked.Score
+	if blockedScore <= 0 {
+		blockedScore = 10
+	}
+	disableScore := 0
+	if cfg.TorrentDisableAfter > 0 {
+		disableScore = torrentScore * cfg.TorrentDisableAfter
+	}
+	if cfg.BlockedDisableAfter > 0 {
+		score := blockedScore * cfg.BlockedDisableAfter
+		if disableScore == 0 || score < disableScore {
+			disableScore = score
+		}
+	}
+	notifyScore := 0
+	if cfg.BlockedNotifyAfter > 0 {
+		notifyScore = blockedScore * cfg.BlockedNotifyAfter
+	}
+	return Profile{
+		Name:               "default",
+		NotifyScore:        notifyScore,
+		BlockIPScore:       80,
+		DisableClientScore: disableScore,
+	}
+}
+
+func actorKey(ev logwatch.Event) string {
+	if ev.Email != "" {
+		return "email:" + ev.Email
+	}
+	return "ip:" + ev.SourceIP
 }

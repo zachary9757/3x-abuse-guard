@@ -13,6 +13,27 @@ xray:
   torrent_tag: "TORRENT"
   blocked_tag: "blocked"
 
+detectors:
+  torrent:
+    enabled: true
+    score: 100
+    block_ip_on_hit: true
+  blocked:
+    enabled: true
+    score: 10
+  port_scan:
+    enabled: true
+    window_minutes: 5
+    distinct_ports: 8
+    score: 80
+    cooldown_minutes: 5
+  connection_rate:
+    enabled: true
+    window_minutes: 5
+    max_connections: 300
+    score: 60
+    cooldown_minutes: 5
+
 firewall:
   backend: "iptables"
   chain: "THREEX_ABUSE_GUARD"
@@ -28,6 +49,23 @@ policy:
   torrent_disable_client_after: 2
   blocked_disable_client_after: 0
   blocked_notify_after: 5
+  profiles:
+    default:
+      notify_score: 50
+      block_ip_score: 80
+      disable_client_score: 200
+    strict:
+      notify_score: 30
+      block_ip_score: 60
+      disable_client_score: 100
+    observe:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
+  assignments:
+    emails: {}
+    inbounds: {}
+    traffic: {}
 
 notify:
   webhook_url: ""

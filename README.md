@@ -90,6 +90,8 @@ sudo systemctl enable --now 3x-abuse-guard
 - 支持 Webhook 通知。
 - 提供 `doctor` 检查 3x-ui API、access log、Xray outbound、routing 和 sniffing。
 - 提供 `print-xray-policy` 输出 3x-ui/Xray 需要加入的配置片段。
+- 支持 Detector Pipeline：`torrent`、`blocked`、`port_scan`、`connection_rate`。
+- 支持 Policy Profiles：可按 email、inbound、流量类型分配不同通知、封 IP、禁用 client 阈值。
 
 它解析如下格式的 Xray access log：
 
@@ -142,6 +144,27 @@ xray:
   torrent_tag: "TORRENT"
   blocked_tag: "blocked"
 
+detectors:
+  torrent:
+    enabled: true
+    score: 100
+    block_ip_on_hit: true
+  blocked:
+    enabled: true
+    score: 10
+  port_scan:
+    enabled: true
+    window_minutes: 5
+    distinct_ports: 8
+    score: 80
+    cooldown_minutes: 5
+  connection_rate:
+    enabled: true
+    window_minutes: 5
+    max_connections: 300
+    score: 60
+    cooldown_minutes: 5
+
 firewall:
   backend: "iptables"
   chain: "THREEX_ABUSE_GUARD"
@@ -157,6 +180,23 @@ policy:
   torrent_disable_client_after: 2
   blocked_disable_client_after: 0
   blocked_notify_after: 5
+  profiles:
+    default:
+      notify_score: 50
+      block_ip_score: 80
+      disable_client_score: 200
+    strict:
+      notify_score: 30
+      block_ip_score: 60
+      disable_client_score: 100
+    observe:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
+  assignments:
+    emails: {}
+    inbounds: {}
+    traffic: {}
 
 notify:
   webhook_url: ""
@@ -183,6 +223,10 @@ logging:
 | `xray.access_log` | Xray access log 路径。守护进程通过它识别 `TORRENT` 和 `blocked` 命中。 |
 | `xray.torrent_tag` | BT/种子流量命中的出站标签，必须和 Xray routing 的 `outboundTag` 一致。 |
 | `xray.blocked_tag` | 高危访问命中的出站标签，必须和 Xray routing 的 `outboundTag` 一致。 |
+| `detectors.torrent` | BT 检测器。命中 `TORRENT` 出站后加分，可配置是否首次命中直接封 IP。 |
+| `detectors.blocked` | 高危访问检测器。命中 `blocked` 出站后加分，默认只累计风险和通知。 |
+| `detectors.port_scan` | 端口扫描检测器。同一源 IP 在窗口内访问多个不同目标端口后加分。 |
+| `detectors.connection_rate` | 连接速率检测器。同一 email/IP 在窗口内连接数过高后加分。 |
 | `firewall.backend` | 防火墙后端：`iptables`、`nft` 或 `noop`。 |
 | `firewall.chain` | 本项目维护的防火墙链名。默认 `THREEX_ABUSE_GUARD`。 |
 | `firewall.block_minutes` | IP 封禁时长，默认 `1440` 分钟，也就是 24 小时。 |
@@ -193,6 +237,10 @@ logging:
 | `policy.torrent_disable_client_after` | 同一 email 在统计窗口内 BT 命中多少次后禁用 client；`0` 表示不禁用。 |
 | `policy.blocked_disable_client_after` | 同一 email 在统计窗口内高危访问命中多少次后禁用 client；默认 `0`，表示不禁用。 |
 | `policy.blocked_notify_after` | 同一 email 在统计窗口内高危访问命中多少次后通知；`0` 表示不通知。 |
+| `policy.profiles` | 风险分处置阈值。达到 `notify_score` 通知，达到 `block_ip_score` 封 IP，达到 `disable_client_score` 禁用 client。省略时会从旧的 `torrent_disable_client_after`、`blocked_notify_after` 推导默认阈值。 |
+| `policy.assignments.emails` | 按 3x-ui client email 指定 profile。 |
+| `policy.assignments.inbounds` | 按 Xray inbound tag 指定 profile。 |
+| `policy.assignments.traffic` | 按检测器类型指定 profile，例如 `torrent`、`blocked`、`port_scan`、`connection_rate`。 |
 | `notify.webhook_url` | Webhook 通知地址，留空则关闭。 |
 | `state.path` | 本地状态数据库路径，用于记录事件和封禁。 |
 | `logging.dir` | 守护进程自身日志目录。systemd 日志仍可用 `journalctl` 查看。 |
@@ -296,6 +344,8 @@ V1 is intentionally narrow:
 - Blocks torrent source IPs for 24 hours by default.
 - Disables a 3x-ui client after 2 torrent hits within 60 minutes by default.
 - Supports either Bearer token auth or username/password login auth for 3x-ui API calls.
+- Supports a detector pipeline for torrent, blocked, port-scan, and connection-rate findings.
+- Supports policy profiles assigned by email, inbound tag, or traffic type.
 - Keeps local state in bbolt at `/var/lib/3x-abuse-guard/state.db`.
 
 ## Install From Source

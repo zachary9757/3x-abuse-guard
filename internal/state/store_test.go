@@ -29,6 +29,22 @@ func TestStoreEventsAndBans(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("count = %d", count)
 	}
+	if _, err := store.RecordEvent(EventRecord{
+		Kind:      "port_scan",
+		Score:     80,
+		Email:     "alice",
+		SourceIP:  "198.51.100.11",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	score, err := store.SumScores("alice", "", now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if score != 80 {
+		t.Fatalf("score = %d", score)
+	}
 
 	if err := store.UpsertBan(BanRecord{
 		IP:        "198.51.100.10",

@@ -44,9 +44,13 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 		BlockedDisableAfter:    cfg.Policy.BlockedDisableClientAfter,
 		BlockedNotifyAfter:     cfg.Policy.BlockedNotifyAfter,
 		BypassIPs:              cfg.Firewall.BypassIPs,
+		Detectors:              cfg.Detectors,
+		Profiles:               policyProfiles(cfg),
+		Assignments:             policyAssignments(cfg),
 	}
 	switch cfg.Policy.Mode {
 	case "observe":
+		policyCfg.ObserveOnly = true
 		policyCfg.TorrentBlockOnFirstHit = false
 		policyCfg.TorrentDisableAfter = 0
 		policyCfg.BlockedDisableAfter = 0
@@ -56,7 +60,7 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 	}
 
 	var panelClient policy.Panel
-	if policyCfg.TorrentDisableAfter > 0 || policyCfg.BlockedDisableAfter > 0 {
+	if needsPanel(policyCfg) {
 		p, _, err := newPanelClient(cfg)
 		if err != nil {
 			store.Close()
@@ -68,6 +72,45 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 	engine := policy.NewEngine(policyCfg, store, fw, panelClient, notify.NewWebhook(cfg.Notify.WebhookURL), logger)
 
 	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine}, nil
+}
+
+func policyProfiles(cfg config.Config) map[string]policy.Profile {
+	if len(cfg.Policy.Profiles) == 0 {
+		return nil
+	}
+	profiles := make(map[string]policy.Profile, len(cfg.Policy.Profiles))
+	for name, profile := range cfg.Policy.Profiles {
+		profiles[name] = policy.Profile{
+			Name:               name,
+			NotifyScore:        profile.NotifyScore,
+			BlockIPScore:       profile.BlockIPScore,
+			DisableClientScore: profile.DisableClientScore,
+		}
+	}
+	return profiles
+}
+
+func policyAssignments(cfg config.Config) policy.Assignments {
+	return policy.Assignments{
+		Emails:   cfg.Policy.Assignments.Emails,
+		Inbounds: cfg.Policy.Assignments.Inbounds,
+		Traffic:  cfg.Policy.Assignments.Traffic,
+	}
+}
+
+func needsPanel(cfg policy.Config) bool {
+	if cfg.ObserveOnly {
+		return false
+	}
+	if cfg.TorrentDisableAfter > 0 || cfg.BlockedDisableAfter > 0 {
+		return true
+	}
+	for _, profile := range cfg.Profiles {
+		if profile.DisableClientScore > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) Close() error {

@@ -39,6 +39,29 @@ Check:
 - 3x-ui API token is valid, or login auth username/password is valid.
 - Client exists in 3x-ui with the same email.
 
+## Port scan or connection-rate detector is too sensitive
+
+Tune the detector thresholds:
+
+```yaml
+detectors:
+  port_scan:
+    distinct_ports: 12
+    window_minutes: 5
+  connection_rate:
+    max_connections: 600
+    window_minutes: 5
+```
+
+Or assign a softer profile for trusted users:
+
+```yaml
+policy:
+  assignments:
+    emails:
+      trusted-user: observe
+```
+
 ## Unblock an IP
 
 ```bash

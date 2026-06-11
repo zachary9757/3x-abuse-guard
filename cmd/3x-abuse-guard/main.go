@@ -140,7 +140,7 @@ func runStatus(args []string) error {
 		fmt.Println("  none")
 	}
 	for _, ev := range events {
-		fmt.Printf("  %s kind=%s email=%s ip=%s target=%s\n", ev.CreatedAt.Format(time.RFC3339), ev.Kind, ev.Email, ev.SourceIP, ev.Target)
+		fmt.Printf("  %s kind=%s score=%d profile=%s email=%s ip=%s target=%s reason=%s\n", ev.CreatedAt.Format(time.RFC3339), ev.Kind, ev.Score, ev.Profile, ev.Email, ev.SourceIP, ev.Target, ev.Reason)
 	}
 	return nil
 }
