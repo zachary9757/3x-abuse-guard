@@ -9,6 +9,7 @@ STATE_DIR="${STATE_DIR:-/var/lib/3x-abuse-guard}"
 LOG_DIR="${LOG_DIR:-/var/log/3x-abuse-guard}"
 PANEL_URL="${PANEL_URL:-http://127.0.0.1:2053/}"
 AUTH_MODE="${AUTH_MODE:-auto}"
+PANEL_INSECURE_SKIP_VERIFY="${PANEL_INSECURE_SKIP_VERIFY:-false}"
 TOKEN="${THREEX_ABUSE_GUARD_TOKEN:-}"
 USERNAME="${THREEX_ABUSE_GUARD_USERNAME:-}"
 PASSWORD="${THREEX_ABUSE_GUARD_PASSWORD:-}"
@@ -33,6 +34,8 @@ usage() {
   --panel-url URL            3x-ui 面板地址，默认 http://127.0.0.1:2053/
   --auth-mode auto|token|login
                              面板鉴权方式，默认 auto；优先 token，缺少 token 时用账号密码
+  --panel-insecure-skip-verify
+                             跳过 3x-ui 面板 HTTPS 证书校验，适合本机自签证书或证书域名不匹配
   --token TOKEN              3x-ui API Token；也可用环境变量 THREEX_ABUSE_GUARD_TOKEN
   --username USERNAME        3x-ui 面板用户名；也可用环境变量 THREEX_ABUSE_GUARD_USERNAME
   --password PASSWORD        3x-ui 面板密码；也可用环境变量 THREEX_ABUSE_GUARD_PASSWORD
@@ -101,6 +104,10 @@ parse_args() {
         AUTH_MODE="${2:-}"
         shift 2
         ;;
+      --panel-insecure-skip-verify)
+        PANEL_INSECURE_SKIP_VERIFY=true
+        shift
+        ;;
       --access-log)
         XRAY_ACCESS_LOG="${2:-}"
         shift 2
@@ -164,6 +171,10 @@ validate_args() {
   case "$AUTH_MODE" in
     auto|token|login) ;;
     *) die "--auth-mode 只能是 auto、token 或 login" ;;
+  esac
+  case "$PANEL_INSECURE_SKIP_VERIFY" in
+    true|false) ;;
+    *) die "PANEL_INSECURE_SKIP_VERIFY 只能是 true 或 false" ;;
   esac
   case "$FIREWALL_BACKEND" in
     iptables|nft|noop) ;;
@@ -380,6 +391,7 @@ panel:
   password_env: "THREEX_ABUSE_GUARD_PASSWORD"
   two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
+  insecure_skip_verify: $PANEL_INSECURE_SKIP_VERIFY
   restart_xray: false
 
 xray:

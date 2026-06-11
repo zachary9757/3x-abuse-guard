@@ -21,7 +21,7 @@ func TestDisableClient(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
 				"obj": map[string]any{
-					"client": map[string]any{"email": "alice", "enable": true, "totalGB": 100},
+					"client":     map[string]any{"email": "alice", "enable": true, "totalGB": 100},
 					"inboundIds": []int{1},
 				},
 			})
@@ -87,7 +87,7 @@ func TestDisableClientWithLogin(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
 				"obj": map[string]any{
-					"client": map[string]any{"email": "alice", "enable": true, "totalGB": 100},
+					"client":     map[string]any{"email": "alice", "enable": true, "totalGB": 100},
 					"inboundIds": []int{1},
 				},
 			})
@@ -130,5 +130,29 @@ func TestAPIError(t *testing.T) {
 	}
 	if _, err := client.GetConfigJSON(context.Background()); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestInsecureSkipVerifyAllowsSelfSignedHTTPS(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"obj": map[string]any{
+				"routing": map[string]any{},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, "secret", time.Second, WithInsecureSkipVerify())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetConfigJSON(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

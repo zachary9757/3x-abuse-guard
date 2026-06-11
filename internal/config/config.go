@@ -29,14 +29,15 @@ type Config struct {
 }
 
 type PanelConfig struct {
-	BaseURL          string `yaml:"base_url"`
-	AuthMode         string `yaml:"auth_mode"`
-	TokenEnv         string `yaml:"token_env"`
-	UsernameEnv      string `yaml:"username_env"`
-	PasswordEnv      string `yaml:"password_env"`
-	TwoFactorCodeEnv string `yaml:"two_factor_code_env"`
-	TimeoutSeconds   int    `yaml:"timeout_seconds"`
-	RestartXray      bool   `yaml:"restart_xray"`
+	BaseURL            string `yaml:"base_url"`
+	AuthMode           string `yaml:"auth_mode"`
+	TokenEnv           string `yaml:"token_env"`
+	UsernameEnv        string `yaml:"username_env"`
+	PasswordEnv        string `yaml:"password_env"`
+	TwoFactorCodeEnv   string `yaml:"two_factor_code_env"`
+	TimeoutSeconds     int    `yaml:"timeout_seconds"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	RestartXray        bool   `yaml:"restart_xray"`
 }
 
 type XrayConfig struct {
@@ -92,14 +93,15 @@ type LoggingConfig struct {
 func Default() Config {
 	return Config{
 		Panel: PanelConfig{
-			BaseURL:          "http://127.0.0.1:2053/",
-			AuthMode:         "auto",
-			TokenEnv:         "THREEX_ABUSE_GUARD_TOKEN",
-			UsernameEnv:      "THREEX_ABUSE_GUARD_USERNAME",
-			PasswordEnv:      "THREEX_ABUSE_GUARD_PASSWORD",
-			TwoFactorCodeEnv: "THREEX_ABUSE_GUARD_2FA_CODE",
-			TimeoutSeconds:   10,
-			RestartXray:      false,
+			BaseURL:            "http://127.0.0.1:2053/",
+			AuthMode:           "auto",
+			TokenEnv:           "THREEX_ABUSE_GUARD_TOKEN",
+			UsernameEnv:        "THREEX_ABUSE_GUARD_USERNAME",
+			PasswordEnv:        "THREEX_ABUSE_GUARD_PASSWORD",
+			TwoFactorCodeEnv:   "THREEX_ABUSE_GUARD_2FA_CODE",
+			TimeoutSeconds:     10,
+			InsecureSkipVerify: false,
+			RestartXray:        false,
 		},
 		Xray: XrayConfig{
 			AccessLog:  "/var/log/x-ui/access.log",

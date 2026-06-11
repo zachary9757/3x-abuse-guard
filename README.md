@@ -34,6 +34,19 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
   --backend iptables
 ```
 
+如果本机访问面板会跳转到 HTTPS，并且证书不是签给 `127.0.0.1`，会出现 `x509: cannot validate certificate for 127.0.0.1`。这种情况下优先把 `--panel-url` 改成证书对应的域名；如果只能本机访问，可以显式跳过面板 TLS 证书校验：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
+  --auth-mode login \
+  --username "你的3x-ui面板用户名" \
+  --password "你的3x-ui面板密码" \
+  --panel-url "https://127.0.0.1:2053/" \
+  --panel-insecure-skip-verify \
+  --access-log "/var/log/x-ui/access.log" \
+  --backend iptables
+```
+
 这个脚本会自动完成：
 
 - 安装基础依赖。
@@ -65,6 +78,7 @@ sudo systemctl enable --now 3x-abuse-guard
 | --- | --- | --- |
 | `--panel-url` | `http://127.0.0.1:2053/` | 3x-ui 面板地址，必须是守护进程所在服务器能访问的地址。 |
 | `--auth-mode` | `auto` | 面板鉴权方式。`auto` 优先用 Token，缺少 Token 时用账号密码；也可以指定 `token` 或 `login`。 |
+| `--panel-insecure-skip-verify` | 关闭 | 跳过 3x-ui 面板 HTTPS 证书校验。仅建议用于本机自签证书或证书域名不匹配场景。 |
 | `--token` | 空 | 写入 3x-ui API Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 |
 | `--username` | 空 | 写入 3x-ui 面板用户名；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_USERNAME`。 |
 | `--password` | 空 | 写入 3x-ui 面板密码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_PASSWORD`。 |
@@ -140,6 +154,7 @@ panel:
   password_env: "THREEX_ABUSE_GUARD_PASSWORD"
   two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
+  insecure_skip_verify: false
   restart_xray: false
 
 xray:
@@ -222,6 +237,7 @@ logging:
 | `panel.password_env` | 从哪个环境变量读取 3x-ui 面板密码。默认是 `THREEX_ABUSE_GUARD_PASSWORD`。 |
 | `panel.two_factor_code_env` | 从哪个环境变量读取 3x-ui 两步验证码。未开启 2FA 时可留空。 |
 | `panel.timeout_seconds` | 调用 3x-ui API 的超时时间。 |
+| `panel.insecure_skip_verify` | 是否跳过面板 HTTPS 证书校验。默认 `false`；只有在本机访问 HTTPS 面板但证书域名不匹配时才建议设为 `true`。 |
 | `panel.restart_xray` | 保留参数，默认不自动重启 Xray，避免误操作。 |
 | `xray.access_log` | Xray access log 路径。守护进程通过它识别 `TORRENT` 和 `blocked` 命中。 |
 | `xray.torrent_tag` | BT/种子流量命中的出站标签，必须和 Xray routing 的 `outboundTag` 一致。 |

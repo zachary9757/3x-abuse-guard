@@ -3,6 +3,7 @@ package panel
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,18 @@ type Client struct {
 	mu        sync.Mutex
 	csrfToken string
 	loggedIn  bool
+}
+
+type Option func(*clientOptions)
+
+type clientOptions struct {
+	insecureSkipVerify bool
+}
+
+func WithInsecureSkipVerify() Option {
+	return func(opts *clientOptions) {
+		opts.insecureSkipVerify = true
+	}
 }
 
 type APIResponse struct {
@@ -54,11 +67,11 @@ func (e statusError) Error() string {
 	return fmt.Sprintf("panel api returned status %d: %s", e.status, e.body)
 }
 
-func New(baseURL string, token string, timeout time.Duration) (*Client, error) {
+func New(baseURL string, token string, timeout time.Duration, opts ...Option) (*Client, error) {
 	if token == "" {
 		return nil, fmt.Errorf("panel api token is required")
 	}
-	client, err := newBaseClient(baseURL, timeout)
+	client, err := newBaseClient(baseURL, timeout, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,14 +79,14 @@ func New(baseURL string, token string, timeout time.Duration) (*Client, error) {
 	return client, nil
 }
 
-func NewWithLogin(baseURL string, username string, password string, twoFactor string, timeout time.Duration) (*Client, error) {
+func NewWithLogin(baseURL string, username string, password string, twoFactor string, timeout time.Duration, opts ...Option) (*Client, error) {
 	if username == "" {
 		return nil, fmt.Errorf("panel username is required")
 	}
 	if password == "" {
 		return nil, fmt.Errorf("panel password is required")
 	}
-	client, err := newBaseClient(baseURL, timeout)
+	client, err := newBaseClient(baseURL, timeout, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +96,7 @@ func NewWithLogin(baseURL string, username string, password string, twoFactor st
 	return client, nil
 }
 
-func newBaseClient(baseURL string, timeout time.Duration) (*Client, error) {
+func newBaseClient(baseURL string, timeout time.Duration, opts ...Option) (*Client, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, err
@@ -98,12 +111,22 @@ func newBaseClient(baseURL string, timeout time.Duration) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	var options clientOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	httpClient := &http.Client{
+		Timeout: timeout,
+		Jar:     jar,
+	}
+	if options.insecureSkipVerify {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		httpClient.Transport = transport
+	}
 	return &Client{
 		baseURL:    u,
-		httpClient: &http.Client{
-			Timeout: timeout,
-			Jar:     jar,
-		},
+		httpClient: httpClient,
 	}, nil
 }
 

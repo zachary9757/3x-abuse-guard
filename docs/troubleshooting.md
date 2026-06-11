@@ -27,6 +27,26 @@ For systemd, put it in:
 /etc/3x-abuse-guard/env
 ```
 
+## `doctor` reports `x509: cannot validate certificate for 127.0.0.1`
+
+This means the panel is being accessed over HTTPS, but its certificate does not contain `127.0.0.1` in the IP SAN list.
+
+Best option: set `panel.base_url` to the domain name covered by the certificate.
+
+For localhost-only access with a self-signed or mismatched certificate, explicitly enable:
+
+```yaml
+panel:
+  base_url: "https://127.0.0.1:2053/"
+  insecure_skip_verify: true
+```
+
+If you use the installer, pass:
+
+```bash
+--panel-insecure-skip-verify
+```
+
 ## Torrent events are not detected
 
 Check:
