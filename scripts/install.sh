@@ -355,6 +355,20 @@ prompt_auth_if_needed() {
   fi
 }
 
+quote_env_value() {
+  printf "'"
+  printf "%s" "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+write_env_line() {
+  local name="$1"
+  local value="$2"
+  printf "%s=" "$name" >>"$CONFIG_DIR/env"
+  quote_env_value "$value" >>"$CONFIG_DIR/env"
+  printf "\n" >>"$CONFIG_DIR/env"
+}
+
 write_config() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
   cat >"$CONFIG_DIR/config.yaml" <<EOF
@@ -420,21 +434,42 @@ logging:
   dir: "$LOG_DIR"
 EOF
 
-  cat >"$CONFIG_DIR/env" <<EOF
-THREEX_ABUSE_GUARD_TOKEN=$TOKEN
-THREEX_ABUSE_GUARD_USERNAME=$USERNAME
-THREEX_ABUSE_GUARD_PASSWORD=$PASSWORD
-THREEX_ABUSE_GUARD_2FA_CODE=$TWO_FACTOR_CODE
-EOF
+  : >"$CONFIG_DIR/env"
+  write_env_line "THREEX_ABUSE_GUARD_TOKEN" "$TOKEN"
+  write_env_line "THREEX_ABUSE_GUARD_USERNAME" "$USERNAME"
+  write_env_line "THREEX_ABUSE_GUARD_PASSWORD" "$PASSWORD"
+  write_env_line "THREEX_ABUSE_GUARD_2FA_CODE" "$TWO_FACTOR_CODE"
 
   chmod 600 "$CONFIG_DIR/config.yaml" "$CONFIG_DIR/env"
   log "已写入配置：$CONFIG_DIR/config.yaml"
   log "已写入环境文件：$CONFIG_DIR/env"
 }
 
+install_cli_wrapper() {
+  local wrapper="$INSTALL_DIR/3x-abuse-guardctl"
+  cat >"$wrapper" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CONFIG_DIR="\${THREEX_ABUSE_GUARD_CONFIG_DIR:-$CONFIG_DIR}"
+ENV_FILE="\${THREEX_ABUSE_GUARD_ENV_FILE:-\$CONFIG_DIR/env}"
+
+if [ -f "\$ENV_FILE" ]; then
+  set -a
+  . "\$ENV_FILE"
+  set +a
+fi
+
+exec "$INSTALL_DIR/3x-abuse-guard" "\$@"
+EOF
+  chmod 0755 "$wrapper"
+  log "已安装辅助命令：$wrapper"
+}
+
 install_service_files() {
   "$INSTALL_DIR/3x-abuse-guard" install --binary "$INSTALL_DIR/3x-abuse-guard"
   write_config
+  install_cli_wrapper
   systemctl daemon-reload
 }
 
@@ -462,7 +497,7 @@ print_next_steps() {
      3x-abuse-guard print-xray-policy
 
 2. 运行检查：
-     3x-abuse-guard doctor
+     3x-abuse-guardctl doctor
 
 3. 查看运行状态：
      systemctl status 3x-abuse-guard --no-pager

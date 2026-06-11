@@ -2,6 +2,12 @@
 
 ## `doctor` says panel auth is missing
 
+If you installed with `scripts/install.sh`, use the helper command. It loads `/etc/3x-abuse-guard/env` before running the binary:
+
+```bash
+sudo 3x-abuse-guardctl doctor
+```
+
 Use API token auth when your panel supports it:
 
 ```bash
@@ -65,7 +71,7 @@ policy:
 ## Unblock an IP
 
 ```bash
-sudo 3x-abuse-guard unblock 198.51.100.10
+sudo 3x-abuse-guardctl unblock 198.51.100.10
 ```
 
 ## Use noop firewall for dry runs

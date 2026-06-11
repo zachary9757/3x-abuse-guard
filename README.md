@@ -40,6 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
 - 优先下载 GitHub Release 二进制；如果没有可用 Release，则自动从源码构建。
 - 安装 `/usr/local/bin/3x-abuse-guard`。
 - 写入 `/etc/3x-abuse-guard/config.yaml` 和 `/etc/3x-abuse-guard/env`。
+- 安装 `/usr/local/bin/3x-abuse-guardctl`，用于自动加载 `/etc/3x-abuse-guard/env` 后执行 `doctor/status/unblock/test-event` 等命令。
 - 创建 `/var/lib/3x-abuse-guard`、`/var/log/3x-abuse-guard`。
 - 安装并启动 `3x-abuse-guard.service`。
 
@@ -55,6 +56,8 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
 sudo nano /etc/3x-abuse-guard/env
 sudo systemctl enable --now 3x-abuse-guard
 ```
+
+手动运行检查、状态、测试事件时，推荐用 `3x-abuse-guardctl`。它会自动加载 `/etc/3x-abuse-guard/env`，避免直接运行 `sudo 3x-abuse-guard doctor` 时缺少面板账号密码环境变量。
 
 ### 安装脚本参数
 
@@ -121,7 +124,7 @@ sudo systemctl enable --now 3x-abuse-guard
 运行就绪检查：
 
 ```bash
-sudo 3x-abuse-guard doctor
+sudo 3x-abuse-guardctl doctor
 ```
 
 ## 配置文件
@@ -268,11 +271,11 @@ policy:
 ```text
 3x-abuse-guard run
 3x-abuse-guard install
-3x-abuse-guard doctor
+3x-abuse-guardctl doctor
 3x-abuse-guard print-xray-policy
-3x-abuse-guard status
-3x-abuse-guard unblock <ip>
-3x-abuse-guard test-event --email alice --ip 198.51.100.10 --tag TORRENT
+3x-abuse-guardctl status
+3x-abuse-guardctl unblock <ip>
+3x-abuse-guardctl test-event --email alice --ip 198.51.100.10 --tag TORRENT
 ```
 
 ## 从源码安装
@@ -401,7 +404,7 @@ Then apply the snippets in the 3x-ui Xray configuration UI. See [docs/3x-ui-xray
 Run a readiness check:
 
 ```bash
-sudo 3x-abuse-guard doctor
+sudo 3x-abuse-guardctl doctor
 ```
 
 ## Commands
@@ -409,11 +412,11 @@ sudo 3x-abuse-guard doctor
 ```text
 3x-abuse-guard run
 3x-abuse-guard install
-3x-abuse-guard doctor
+3x-abuse-guardctl doctor
 3x-abuse-guard print-xray-policy
-3x-abuse-guard status
-3x-abuse-guard unblock <ip>
-3x-abuse-guard test-event --email alice --ip 198.51.100.10 --tag TORRENT
+3x-abuse-guardctl status
+3x-abuse-guardctl unblock <ip>
+3x-abuse-guardctl test-event --email alice --ip 198.51.100.10 --tag TORRENT
 ```
 
 ## Default Policy

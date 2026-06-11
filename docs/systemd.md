@@ -41,5 +41,5 @@ Inspect:
 
 ```bash
 sudo journalctl -u 3x-abuse-guard -f --no-pager
-sudo 3x-abuse-guard status
+sudo 3x-abuse-guardctl status
 ```
