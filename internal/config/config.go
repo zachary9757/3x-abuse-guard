@@ -124,6 +124,36 @@ func Default() Config {
 			TorrentDisableClientAfter: 2,
 			BlockedDisableClientAfter: 0,
 			BlockedNotifyAfter:        5,
+			Profiles: map[string]PolicyProfileConfig{
+				"default": {
+					NotifyScore:        50,
+					BlockIPScore:       80,
+					DisableClientScore: 200,
+				},
+				"strict": {
+					NotifyScore:        30,
+					BlockIPScore:       60,
+					DisableClientScore: 100,
+				},
+				"observe": {
+					NotifyScore:        50,
+					BlockIPScore:       0,
+					DisableClientScore: 0,
+				},
+				"heuristic": {
+					NotifyScore:        80,
+					BlockIPScore:       320,
+					DisableClientScore: 0,
+				},
+			},
+			Assignments: PolicyAssignmentsConfig{
+				Emails:   map[string]string{},
+				Inbounds: map[string]string{},
+				Traffic: map[string]string{
+					"port_scan":       "heuristic",
+					"connection_rate": "heuristic",
+				},
+			},
 		},
 		Notify: NotifyConfig{
 			TelegramBotTokenEnv: "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN",

@@ -225,13 +225,13 @@ detectors:
   port_scan:
     enabled: true
     window_minutes: 5
-    distinct_ports: 8
+    distinct_ports: 50
     score: 80
     cooldown_minutes: 5
   connection_rate:
     enabled: true
     window_minutes: 5
-    max_connections: 300
+    max_connections: 1500
     score: 60
     cooldown_minutes: 5
 
@@ -263,10 +263,16 @@ policy:
       notify_score: 50
       block_ip_score: 0
       disable_client_score: 0
+    heuristic:
+      notify_score: 80
+      block_ip_score: 320
+      disable_client_score: 0
   assignments:
     emails: {}
     inbounds: {}
-    traffic: {}
+    traffic:
+      port_scan: heuristic
+      connection_rate: heuristic
 
 notify:
   webhook_url: ""
@@ -298,8 +304,8 @@ logging:
 | `xray.blocked_tag` | 高危访问命中的出站标签，必须和 Xray routing 的 `outboundTag` 一致。 |
 | `detectors.torrent` | BT 检测器。命中 `TORRENT` 出站后加分，可配置是否首次命中直接封 IP。 |
 | `detectors.blocked` | 高危访问检测器。命中 `blocked` 出站后加分，默认只累计风险和通知。 |
-| `detectors.port_scan` | 端口扫描检测器。同一源 IP 在窗口内访问多个不同目标端口后加分。 |
-| `detectors.connection_rate` | 连接速率检测器。同一 email/IP 在窗口内连接数过高后加分。 |
+| `detectors.port_scan` | 端口扫描检测器。同一源 IP 在窗口内访问多个不同目标端口后加分。默认阈值偏宽松，适配手机全局代理。 |
+| `detectors.connection_rate` | 连接速率检测器。同一 email/IP 在窗口内连接数过高后加分。默认阈值偏宽松，适配手机全局代理。 |
 | `firewall.backend` | 防火墙后端：`iptables`、`nft` 或 `noop`。 |
 | `firewall.chain` | 本项目维护的防火墙链名。默认 `THREEX_ABUSE_GUARD`。 |
 | `firewall.block_minutes` | IP 封禁时长，默认 `1440` 分钟，也就是 24 小时。 |
@@ -310,10 +316,10 @@ logging:
 | `policy.torrent_disable_client_after` | 同一 email 在统计窗口内 BT 命中多少次后禁用 client；`0` 表示不禁用。 |
 | `policy.blocked_disable_client_after` | 同一 email 在统计窗口内高危访问命中多少次后禁用 client；默认 `0`，表示不禁用。 |
 | `policy.blocked_notify_after` | 同一 email 在统计窗口内高危访问命中多少次后通知；`0` 表示不通知。 |
-| `policy.profiles` | 风险分处置阈值。达到 `notify_score` 通知，达到 `block_ip_score` 封 IP，达到 `disable_client_score` 禁用 client。省略时会从旧的 `torrent_disable_client_after`、`blocked_notify_after` 推导默认阈值。 |
+| `policy.profiles` | 风险分处置阈值。达到 `notify_score` 通知，达到 `block_ip_score` 封 IP，达到 `disable_client_score` 禁用 client。默认内置 `default`、`strict`、`observe` 和 `heuristic`。 |
 | `policy.assignments.emails` | 按 3x-ui client email 指定 profile。 |
 | `policy.assignments.inbounds` | 按 Xray inbound tag 指定 profile。 |
-| `policy.assignments.traffic` | 按检测器类型指定 profile，例如 `torrent`、`blocked`、`port_scan`、`connection_rate`。 |
+| `policy.assignments.traffic` | 按检测器类型指定 profile，例如 `torrent`、`blocked`、`port_scan`、`connection_rate`。默认 `port_scan` 和 `connection_rate` 使用 `heuristic`，首次触发通知，持续异常累计到 320 分后封 IP。 |
 | `notify.webhook_url` | Webhook 通知地址，留空则关闭。 |
 | `notify.telegram_bot_token_env` | 从哪个环境变量读取 Telegram Bot Token。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`。 |
 | `notify.telegram_chat_id_env` | 从哪个环境变量读取 Telegram Chat ID。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`。 |
@@ -371,13 +377,19 @@ policy:
   torrent_disable_client_after: 2
   blocked_disable_client_after: 0
   blocked_notify_after: 5
+  assignments:
+    traffic:
+      port_scan: heuristic
+      connection_rate: heuristic
 ```
 
 含义：
 
 - 第一次 BT 命中会封禁源 IP。
 - 同一 email 在 60 分钟内第二次 BT 命中会禁用该 client。
-- `blocked` 高风险访问默认只在 5 次后发送通知，不自动禁用。
+- `blocked` 高风险访问默认只在 5 次后发送通知，持续累计到默认封禁阈值后封 IP，不自动禁用。
+- `port_scan` 和 `connection_rate` 默认使用 `heuristic` profile，首次触发先通知；持续异常累计到 320 分后封 IP，不禁用 client，避免手机全局代理偶发流量误封。
+- 按默认分数计算，`port_scan` 大约 60 分钟内连续 4 次触发才封 IP；`connection_rate` 大约 60 分钟内连续 6 次触发才封 IP。
 
 ## 常用运维命令
 
@@ -622,13 +634,19 @@ policy:
   torrent_disable_client_after: 2
   blocked_disable_client_after: 0
   blocked_notify_after: 5
+  assignments:
+    traffic:
+      port_scan: heuristic
+      connection_rate: heuristic
 ```
 
 This means:
 
 - first torrent hit blocks the source IP
 - second torrent hit by the same email within 60 minutes disables that client
-- blocked high-risk traffic only notifies after 5 hits
+- blocked high-risk traffic notifies after 5 hits and can block after the default score threshold
+- port_scan and connection_rate use the heuristic profile by default: they notify first, then block the source IP only after sustained heuristic risk reaches 320 points, and they do not disable clients
+- with default scores, port_scan blocks after about 4 findings within 60 minutes, while connection_rate blocks after about 6 findings within 60 minutes
 
 ## Development
 

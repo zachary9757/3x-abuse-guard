@@ -10,6 +10,13 @@ func TestExampleYAMLIncludesTelegramNotifyEnv(t *testing.T) {
 	for _, want := range []string{
 		`telegram_bot_token_env: THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`,
 		`telegram_chat_id_env: THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`,
+		`distinct_ports: 50`,
+		`max_connections: 1500`,
+		`heuristic:`,
+		`notify_score: 80`,
+		`block_ip_score: 320`,
+		`port_scan: heuristic`,
+		`connection_rate: heuristic`,
 	} {
 		if !strings.Contains(yaml, want) {
 			t.Fatalf("example yaml missing %q:\n%s", want, yaml)

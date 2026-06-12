@@ -21,7 +21,7 @@ type Panel interface {
 
 type Store interface {
 	RecordEvent(rec state.EventRecord) (state.EventRecord, error)
-	SumScores(email string, sourceIP string, since time.Time) (int, error)
+	SumScores(email string, sourceIP string, profile string, since time.Time) (int, error)
 	UpsertBan(rec state.BanRecord) error
 }
 
@@ -84,6 +84,7 @@ func NewEngine(cfg Config, store Store, fw firewall.Firewall, panel Panel, notif
 	pipeline := detector.NewPipeline(cfg.Detectors)
 	cfg.Detectors = pipeline.Config()
 	profiles := normalizeProfiles(cfg)
+	cfg.Assignments = normalizeAssignments(cfg.Assignments)
 	return &Engine{
 		cfg:      cfg,
 		store:    store,
@@ -136,7 +137,7 @@ func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding de
 	}); err != nil {
 		return err
 	}
-	total, err := e.store.SumScores(ev.Email, ev.SourceIP, finding.CreatedAt.Add(-e.cfg.Window))
+	total, err := e.store.SumScores(ev.Email, ev.SourceIP, profile.Name, finding.CreatedAt.Add(-e.cfg.Window))
 	if err != nil {
 		return err
 	}
@@ -278,6 +279,9 @@ func normalizeProfiles(cfg Config) map[string]Profile {
 	if _, ok := profiles["default"]; !ok {
 		profiles["default"] = defaultProfile(cfg)
 	}
+	if _, ok := profiles["heuristic"]; !ok {
+		profiles["heuristic"] = heuristicProfile()
+	}
 	if cfg.ObserveOnly {
 		for name, profile := range profiles {
 			profile.BlockIPScore = 0
@@ -286,6 +290,19 @@ func normalizeProfiles(cfg Config) map[string]Profile {
 		}
 	}
 	return profiles
+}
+
+func normalizeAssignments(assignments Assignments) Assignments {
+	if assignments.Traffic == nil {
+		assignments.Traffic = map[string]string{}
+	}
+	if assignments.Traffic["port_scan"] == "" {
+		assignments.Traffic["port_scan"] = "heuristic"
+	}
+	if assignments.Traffic["connection_rate"] == "" {
+		assignments.Traffic["connection_rate"] = "heuristic"
+	}
+	return assignments
 }
 
 func defaultProfile(cfg Config) Profile {
@@ -316,6 +333,15 @@ func defaultProfile(cfg Config) Profile {
 		NotifyScore:        notifyScore,
 		BlockIPScore:       80,
 		DisableClientScore: disableScore,
+	}
+}
+
+func heuristicProfile() Profile {
+	return Profile{
+		Name:               "heuristic",
+		NotifyScore:        80,
+		BlockIPScore:       320,
+		DisableClientScore: 0,
 	}
 }
 

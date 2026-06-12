@@ -112,7 +112,7 @@ func (s *Store) CountEvents(email string, kind string, since time.Time) (int, er
 	return count, err
 }
 
-func (s *Store) SumScores(email string, sourceIP string, since time.Time) (int, error) {
+func (s *Store) SumScores(email string, sourceIP string, profile string, since time.Time) (int, error) {
 	total := 0
 	err := s.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(eventsBucket).ForEach(func(_, v []byte) error {
@@ -121,6 +121,9 @@ func (s *Store) SumScores(email string, sourceIP string, since time.Time) (int, 
 				return err
 			}
 			if rec.CreatedAt.Before(since) {
+				return nil
+			}
+			if profile != "" && rec.Profile != profile {
 				return nil
 			}
 			if email != "" {

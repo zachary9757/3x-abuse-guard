@@ -76,14 +76,14 @@ func DefaultConfig() Config {
 		PortScan: PortScanConfig{
 			Enabled:         true,
 			WindowMinutes:   5,
-			DistinctPorts:   8,
+			DistinctPorts:   50,
 			Score:           80,
 			CooldownMinutes: 5,
 		},
 		ConnectionRate: ConnectionRateConfig{
 			Enabled:         true,
 			WindowMinutes:   5,
-			MaxConnections:  300,
+			MaxConnections:  1500,
 			Score:           60,
 			CooldownMinutes: 5,
 		},

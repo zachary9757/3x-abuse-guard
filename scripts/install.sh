@@ -422,13 +422,13 @@ detectors:
   port_scan:
     enabled: true
     window_minutes: 5
-    distinct_ports: 8
+    distinct_ports: 50
     score: 80
     cooldown_minutes: 5
   connection_rate:
     enabled: true
     window_minutes: 5
-    max_connections: 300
+    max_connections: 1500
     score: 60
     cooldown_minutes: 5
 
@@ -447,6 +447,29 @@ policy:
   torrent_disable_client_after: 2
   blocked_disable_client_after: 0
   blocked_notify_after: 5
+  profiles:
+    default:
+      notify_score: 50
+      block_ip_score: 80
+      disable_client_score: 200
+    strict:
+      notify_score: 30
+      block_ip_score: 60
+      disable_client_score: 100
+    observe:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
+    heuristic:
+      notify_score: 80
+      block_ip_score: 320
+      disable_client_score: 0
+  assignments:
+    emails: {}
+    inbounds: {}
+    traffic:
+      port_scan: heuristic
+      connection_rate: heuristic
 
 notify:
   webhook_url: "$WEBHOOK_URL"

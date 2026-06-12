@@ -32,18 +32,26 @@ func TestStoreEventsAndBans(t *testing.T) {
 	if _, err := store.RecordEvent(EventRecord{
 		Kind:      "port_scan",
 		Score:     80,
+		Profile:   "heuristic",
 		Email:     "alice",
 		SourceIP:  "198.51.100.11",
 		CreatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	score, err := store.SumScores("alice", "", now.Add(-time.Minute))
+	score, err := store.SumScores("alice", "", "heuristic", now.Add(-time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if score != 80 {
 		t.Fatalf("score = %d", score)
+	}
+	score, err = store.SumScores("alice", "", "default", now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if score != 0 {
+		t.Fatalf("default score = %d", score)
 	}
 
 	if err := store.UpsertBan(BanRecord{

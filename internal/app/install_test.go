@@ -23,4 +23,21 @@ func TestInstallWritesFiles(t *testing.T) {
 			t.Fatalf("missing %s: %v", path, err)
 		}
 	}
+	data, err := os.ReadFile(filepath.Join(root, "etc/3x-abuse-guard/config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configYAML := string(data)
+	for _, want := range []string{
+		"heuristic:",
+		"block_ip_score: 320",
+		"port_scan: heuristic",
+		"connection_rate: heuristic",
+		"distinct_ports: 50",
+		"max_connections: 1500",
+	} {
+		if !strings.Contains(configYAML, want) {
+			t.Fatalf("config missing %q:\n%s", want, configYAML)
+		}
+	}
 }
