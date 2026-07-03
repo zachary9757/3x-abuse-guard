@@ -279,6 +279,9 @@ func normalizeProfiles(cfg Config) map[string]Profile {
 	if _, ok := profiles["default"]; !ok {
 		profiles["default"] = defaultProfile(cfg)
 	}
+	if _, ok := profiles["blocked_watch"]; !ok {
+		profiles["blocked_watch"] = blockedWatchProfile()
+	}
 	if _, ok := profiles["heuristic"]; !ok {
 		profiles["heuristic"] = heuristicProfile()
 	}
@@ -295,6 +298,9 @@ func normalizeProfiles(cfg Config) map[string]Profile {
 func normalizeAssignments(assignments Assignments) Assignments {
 	if assignments.Traffic == nil {
 		assignments.Traffic = map[string]string{}
+	}
+	if assignments.Traffic["blocked"] == "" {
+		assignments.Traffic["blocked"] = "blocked_watch"
 	}
 	if assignments.Traffic["port_scan"] == "" {
 		assignments.Traffic["port_scan"] = "heuristic"
@@ -336,11 +342,20 @@ func defaultProfile(cfg Config) Profile {
 	}
 }
 
+func blockedWatchProfile() Profile {
+	return Profile{
+		Name:               "blocked_watch",
+		NotifyScore:        50,
+		BlockIPScore:       0,
+		DisableClientScore: 0,
+	}
+}
+
 func heuristicProfile() Profile {
 	return Profile{
 		Name:               "heuristic",
 		NotifyScore:        80,
-		BlockIPScore:       320,
+		BlockIPScore:       0,
 		DisableClientScore: 0,
 	}
 }

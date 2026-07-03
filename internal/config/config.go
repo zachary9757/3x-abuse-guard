@@ -140,9 +140,14 @@ func Default() Config {
 					BlockIPScore:       0,
 					DisableClientScore: 0,
 				},
+				"blocked_watch": {
+					NotifyScore:        50,
+					BlockIPScore:       0,
+					DisableClientScore: 0,
+				},
 				"heuristic": {
 					NotifyScore:        80,
-					BlockIPScore:       320,
+					BlockIPScore:       0,
 					DisableClientScore: 0,
 				},
 			},
@@ -150,6 +155,7 @@ func Default() Config {
 				Emails:   map[string]string{},
 				Inbounds: map[string]string{},
 				Traffic: map[string]string{
+					"blocked":         "blocked_watch",
 					"port_scan":       "heuristic",
 					"connection_rate": "heuristic",
 				},

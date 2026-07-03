@@ -29,8 +29,10 @@ func TestInstallWritesFiles(t *testing.T) {
 	}
 	configYAML := string(data)
 	for _, want := range []string{
+		"blocked_watch:",
 		"heuristic:",
-		"block_ip_score: 320",
+		"block_ip_score: 0",
+		"blocked: blocked_watch",
 		"port_scan: heuristic",
 		"connection_rate: heuristic",
 		"distinct_ports: 50",

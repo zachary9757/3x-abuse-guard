@@ -62,14 +62,19 @@ policy:
       notify_score: 50
       block_ip_score: 0
       disable_client_score: 0
+    blocked_watch:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
     heuristic:
       notify_score: 80
-      block_ip_score: 320
+      block_ip_score: 0
       disable_client_score: 0
   assignments:
     emails: {}
     inbounds: {}
     traffic:
+      blocked: blocked_watch
       port_scan: heuristic
       connection_rate: heuristic
 

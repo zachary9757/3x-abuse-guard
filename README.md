@@ -263,14 +263,19 @@ policy:
       notify_score: 50
       block_ip_score: 0
       disable_client_score: 0
+    blocked_watch:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
     heuristic:
       notify_score: 80
-      block_ip_score: 320
+      block_ip_score: 0
       disable_client_score: 0
   assignments:
     emails: {}
     inbounds: {}
     traffic:
+      blocked: blocked_watch
       port_scan: heuristic
       connection_rate: heuristic
 
@@ -303,7 +308,7 @@ logging:
 | `xray.torrent_tag` | BT/种子流量命中的出站标签，必须和 Xray routing 的 `outboundTag` 一致。 |
 | `xray.blocked_tag` | 高危访问命中的出站标签，必须和 Xray routing 的 `outboundTag` 一致。 |
 | `detectors.torrent` | BT 检测器。命中 `TORRENT` 出站后加分，可配置是否首次命中直接封 IP。 |
-| `detectors.blocked` | 高危访问检测器。命中 `blocked` 出站后加分，默认只累计风险和通知。 |
+| `detectors.blocked` | 高危访问检测器。命中 `blocked` 出站后加分，默认只累计风险和通知，不自动封 IP 或禁用 client。 |
 | `detectors.port_scan` | 端口扫描检测器。同一源 IP 在窗口内访问多个不同目标端口后加分。默认阈值偏宽松，适配手机全局代理。 |
 | `detectors.connection_rate` | 连接速率检测器。同一 email/IP 在窗口内连接数过高后加分。默认阈值偏宽松，适配手机全局代理。 |
 | `firewall.backend` | 防火墙后端：`iptables`、`nft` 或 `noop`。 |
@@ -316,10 +321,10 @@ logging:
 | `policy.torrent_disable_client_after` | 同一 email 在统计窗口内 BT 命中多少次后禁用 client；`0` 表示不禁用。 |
 | `policy.blocked_disable_client_after` | 同一 email 在统计窗口内高危访问命中多少次后禁用 client；默认 `0`，表示不禁用。 |
 | `policy.blocked_notify_after` | 同一 email 在统计窗口内高危访问命中多少次后通知；`0` 表示不通知。 |
-| `policy.profiles` | 风险分处置阈值。达到 `notify_score` 通知，达到 `block_ip_score` 封 IP，达到 `disable_client_score` 禁用 client。默认内置 `default`、`strict`、`observe` 和 `heuristic`。 |
+| `policy.profiles` | 风险分处置阈值。达到 `notify_score` 通知，达到 `block_ip_score` 封 IP，达到 `disable_client_score` 禁用 client。默认内置 `default`、`strict`、`observe`、`blocked_watch` 和 `heuristic`。 |
 | `policy.assignments.emails` | 按 3x-ui client email 指定 profile。 |
 | `policy.assignments.inbounds` | 按 Xray inbound tag 指定 profile。 |
-| `policy.assignments.traffic` | 按检测器类型指定 profile，例如 `torrent`、`blocked`、`port_scan`、`connection_rate`。默认 `port_scan` 和 `connection_rate` 使用 `heuristic`，首次触发通知，持续异常累计到 320 分后封 IP。 |
+| `policy.assignments.traffic` | 按检测器类型指定 profile，例如 `torrent`、`blocked`、`port_scan`、`connection_rate`。默认 `blocked` 使用 `blocked_watch`，`port_scan` 和 `connection_rate` 使用 `heuristic`；这些低置信信号只通知，不自动封 IP 或禁用 client。 |
 | `notify.webhook_url` | Webhook 通知地址，留空则关闭。 |
 | `notify.telegram_bot_token_env` | 从哪个环境变量读取 Telegram Bot Token。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`。 |
 | `notify.telegram_chat_id_env` | 从哪个环境变量读取 Telegram Chat ID。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`。 |
@@ -377,8 +382,18 @@ policy:
   torrent_disable_client_after: 2
   blocked_disable_client_after: 0
   blocked_notify_after: 5
+  profiles:
+    blocked_watch:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
+    heuristic:
+      notify_score: 80
+      block_ip_score: 0
+      disable_client_score: 0
   assignments:
     traffic:
+      blocked: blocked_watch
       port_scan: heuristic
       connection_rate: heuristic
 ```
@@ -387,9 +402,9 @@ policy:
 
 - 第一次 BT 命中会封禁源 IP。
 - 同一 email 在 60 分钟内第二次 BT 命中会禁用该 client。
-- `blocked` 高风险访问默认只在 5 次后发送通知，持续累计到默认封禁阈值后封 IP，不自动禁用。
-- `port_scan` 和 `connection_rate` 默认使用 `heuristic` profile，首次触发先通知；持续异常累计到 320 分后封 IP，不禁用 client，避免手机全局代理偶发流量误封。
-- 按默认分数计算，`port_scan` 大约 60 分钟内连续 4 次触发才封 IP；`connection_rate` 大约 60 分钟内连续 6 次触发才封 IP。
+- `blocked` 高风险访问默认使用 `blocked_watch` profile，累计到 5 次后通知，不自动封 IP 或禁用 client。
+- `port_scan` 和 `connection_rate` 默认使用 `heuristic` profile，只通知，不自动封 IP 或禁用 client，避免手机全局代理偶发流量误封。
+- 如果需要让低置信信号也自动封 IP，可以显式把对应 traffic 分配到 `default` 或自定义带 `block_ip_score` 的 profile。
 
 ## 常用运维命令
 
@@ -634,8 +649,18 @@ policy:
   torrent_disable_client_after: 2
   blocked_disable_client_after: 0
   blocked_notify_after: 5
+  profiles:
+    blocked_watch:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
+    heuristic:
+      notify_score: 80
+      block_ip_score: 0
+      disable_client_score: 0
   assignments:
     traffic:
+      blocked: blocked_watch
       port_scan: heuristic
       connection_rate: heuristic
 ```
@@ -644,9 +669,9 @@ This means:
 
 - first torrent hit blocks the source IP
 - second torrent hit by the same email within 60 minutes disables that client
-- blocked high-risk traffic notifies after 5 hits and can block after the default score threshold
-- port_scan and connection_rate use the heuristic profile by default: they notify first, then block the source IP only after sustained heuristic risk reaches 320 points, and they do not disable clients
-- with default scores, port_scan blocks after about 4 findings within 60 minutes, while connection_rate blocks after about 6 findings within 60 minutes
+- blocked high-risk traffic uses the blocked_watch profile by default: it notifies after 5 hits, but does not auto-block IPs or disable clients
+- port_scan and connection_rate use the heuristic profile by default: they notify only, and do not auto-block IPs or disable clients
+- assign a traffic kind to default or a custom profile with block_ip_score when you want lower-confidence signals to auto-block
 
 ## Development
 

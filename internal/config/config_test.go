@@ -12,9 +12,11 @@ func TestExampleYAMLIncludesTelegramNotifyEnv(t *testing.T) {
 		`telegram_chat_id_env: THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`,
 		`distinct_ports: 50`,
 		`max_connections: 1500`,
+		`blocked_watch:`,
 		`heuristic:`,
 		`notify_score: 80`,
-		`block_ip_score: 320`,
+		`block_ip_score: 0`,
+		`blocked: blocked_watch`,
 		`port_scan: heuristic`,
 		`connection_rate: heuristic`,
 	} {

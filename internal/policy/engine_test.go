@@ -112,6 +112,11 @@ func TestScoreThresholdNotificationIncludesContext(t *testing.T) {
 				NotifyScore: 10,
 			},
 		},
+		Assignments: Assignments{
+			Traffic: map[string]string{
+				"blocked": "default",
+			},
+		},
 	}, store, &firewall.Noop{}, nil, notifier, nil)
 
 	if err := engine.Handle(context.Background(), logwatch.Event{
@@ -199,7 +204,7 @@ func TestDefaultConnectionRateNotifiesBeforeBlockThreshold(t *testing.T) {
 	}
 }
 
-func TestDefaultConnectionRateBlocksAfterSustainedFindings(t *testing.T) {
+func TestDefaultConnectionRateDoesNotAutoBlockAfterSustainedFindings(t *testing.T) {
 	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -240,17 +245,17 @@ func TestDefaultConnectionRateBlocksAfterSustainedFindings(t *testing.T) {
 			}
 		}
 	}
-	if len(fw.Blocked) != 1 || fw.Blocked[0] != "198.51.100.10" {
+	if len(fw.Blocked) != 0 {
 		t.Fatalf("blocked = %v", fw.Blocked)
 	}
-	if len(notifier.events) != 2 {
+	if len(notifier.events) != 1 {
 		t.Fatalf("events = %v", notifier.events)
 	}
-	got := notifier.events[1]
-	if got.Action != "ip_blocked" || got.Kind != "connection_rate" {
+	got := notifier.events[0]
+	if got.Action != "score_threshold" || got.Kind != "connection_rate" {
 		t.Fatalf("event action/kind = %s/%s", got.Action, got.Kind)
 	}
-	if got.Score != 360 || got.Threshold != 320 || got.Profile != "heuristic" {
+	if got.Score != 120 || got.Threshold != 80 || got.Profile != "heuristic" {
 		t.Fatalf("event score/threshold/profile = %d/%d/%s", got.Score, got.Threshold, got.Profile)
 	}
 }
@@ -305,7 +310,47 @@ func TestHeuristicScoresDoNotContributeToDefaultBlock(t *testing.T) {
 	}
 }
 
-func TestBlockedStillBlocksAfterDefaultThreshold(t *testing.T) {
+func TestDefaultBlockedOnlyNotifies(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fw := &firewall.Noop{}
+	notifier := &recordingNotifier{}
+	engine := NewEngine(Config{
+		Window:        time.Hour,
+		BlockDuration: time.Hour,
+	}, store, fw, nil, notifier, nil)
+
+	for i := 0; i < 8; i++ {
+		if err := engine.Handle(context.Background(), logwatch.Event{
+			Time:     time.Now().Add(time.Duration(i) * time.Second),
+			Kind:     logwatch.KindBlocked,
+			SourceIP: "198.51.100.10",
+			Email:    "alice",
+			Target:   "example.com:25",
+			Outbound: "blocked",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(fw.Blocked) != 0 {
+		t.Fatalf("blocked = %v", fw.Blocked)
+	}
+	if len(notifier.events) != 1 {
+		t.Fatalf("events = %v", notifier.events)
+	}
+	got := notifier.events[0]
+	if got.Action != "score_threshold" || got.Kind != "blocked" {
+		t.Fatalf("event action/kind = %s/%s", got.Action, got.Kind)
+	}
+	if got.Score != 50 || got.Threshold != 50 || got.Profile != "blocked_watch" {
+		t.Fatalf("event score/threshold/profile = %d/%d/%s", got.Score, got.Threshold, got.Profile)
+	}
+}
+
+func TestBlockedCanBlockWhenAssignedToDefaultProfile(t *testing.T) {
 	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -315,6 +360,11 @@ func TestBlockedStillBlocksAfterDefaultThreshold(t *testing.T) {
 	engine := NewEngine(Config{
 		Window:        time.Hour,
 		BlockDuration: time.Hour,
+		Assignments: Assignments{
+			Traffic: map[string]string{
+				"blocked": "default",
+			},
+		},
 	}, store, fw, nil, notify.Noop{}, nil)
 
 	for i := 0; i < 8; i++ {
@@ -389,7 +439,7 @@ func TestDefaultPortScanNotifiesBeforeBlockThreshold(t *testing.T) {
 	}
 }
 
-func TestDefaultPortScanBlocksAfterSustainedFindings(t *testing.T) {
+func TestDefaultPortScanDoesNotAutoBlockAfterSustainedFindings(t *testing.T) {
 	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -438,17 +488,17 @@ func TestDefaultPortScanBlocksAfterSustainedFindings(t *testing.T) {
 			}
 		}
 	}
-	if len(fw.Blocked) != 1 || fw.Blocked[0] != "198.51.100.10" {
+	if len(fw.Blocked) != 0 {
 		t.Fatalf("blocked = %v", fw.Blocked)
 	}
-	if len(notifier.events) != 2 {
+	if len(notifier.events) != 1 {
 		t.Fatalf("events = %v", notifier.events)
 	}
-	got := notifier.events[1]
-	if got.Action != "ip_blocked" || got.Kind != "port_scan" {
+	got := notifier.events[0]
+	if got.Action != "score_threshold" || got.Kind != "port_scan" {
 		t.Fatalf("event action/kind = %s/%s", got.Action, got.Kind)
 	}
-	if got.Score != 320 || got.Threshold != 320 || got.Profile != "heuristic" {
+	if got.Score != 80 || got.Threshold != 80 || got.Profile != "heuristic" {
 		t.Fatalf("event score/threshold/profile = %d/%d/%s", got.Score, got.Threshold, got.Profile)
 	}
 }
