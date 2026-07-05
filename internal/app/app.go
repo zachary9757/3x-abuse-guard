@@ -15,11 +15,13 @@ import (
 )
 
 type App struct {
-	Config config.Config
-	Logger *log.Logger
-	store  *state.Store
-	fw     firewall.Firewall
-	engine *policy.Engine
+	Config   config.Config
+	Logger   *log.Logger
+	store    *state.Store
+	fw       firewall.Firewall
+	engine   *policy.Engine
+	notifier notify.Notifier
+	activity *activityStats
 }
 
 func New(cfg config.Config, logger *log.Logger) (*App, error) {
@@ -69,9 +71,10 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 		panelClient = p
 	}
 
-	engine := policy.NewEngine(policyCfg, store, fw, panelClient, newNotifier(cfg), logger)
+	notifier := newNotifier(cfg)
+	engine := policy.NewEngine(policyCfg, store, fw, panelClient, notifier, logger)
 
-	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine}, nil
+	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine, notifier: notifier, activity: newActivityStats()}, nil
 }
 
 func newNotifier(cfg config.Config) notify.Notifier {
@@ -149,6 +152,8 @@ func (a *App) Run(ctx context.Context) error {
 
 	cleanup := time.NewTicker(time.Minute)
 	defer cleanup.Stop()
+	reportTimer := time.NewTimer(timeUntilNextMidnight(time.Now()))
+	defer reportTimer.Stop()
 
 	for {
 		select {
@@ -164,6 +169,7 @@ func (a *App) Run(ctx context.Context) error {
 			if !ok {
 				continue
 			}
+			a.activity.Record(ev)
 			if err := a.engine.Handle(ctx, ev); err != nil {
 				a.Logger.Printf("handle event failed: %v", err)
 			}
@@ -171,6 +177,11 @@ func (a *App) Run(ctx context.Context) error {
 			if err := a.cleanupExpiredBans(ctx); err != nil {
 				a.Logger.Printf("cleanup failed: %v", err)
 			}
+		case now := <-reportTimer.C:
+			if err := a.sendPendingAccessReports(ctx, reportDayFor(now)); err != nil {
+				a.Logger.Printf("daily access report failed: %v", err)
+			}
+			reportTimer.Reset(timeUntilNextMidnight(time.Now()))
 		}
 	}
 }

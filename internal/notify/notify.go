@@ -30,6 +30,10 @@ type Notifier interface {
 	Notify(ctx context.Context, event Event) error
 }
 
+type TextNotifier interface {
+	NotifyText(ctx context.Context, text string) error
+}
+
 type Config struct {
 	WebhookURL       string
 	TelegramBotToken string
@@ -39,6 +43,8 @@ type Config struct {
 type Noop struct{}
 
 func (Noop) Notify(context.Context, Event) error { return nil }
+
+func (Noop) NotifyText(context.Context, string) error { return nil }
 
 type Multi struct {
 	Notifiers []Notifier
@@ -72,6 +78,31 @@ func (m Multi) Notify(ctx context.Context, event Event) error {
 		}
 	}
 	return firstErr
+}
+
+func (m Multi) NotifyText(ctx context.Context, text string) error {
+	var firstErr error
+	for _, notifier := range m.Notifiers {
+		textNotifier, ok := notifier.(TextNotifier)
+		if !ok || textNotifier == nil {
+			continue
+		}
+		if err := textNotifier.NotifyText(ctx, text); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func SendText(ctx context.Context, notifier Notifier, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	textNotifier, ok := notifier.(TextNotifier)
+	if !ok || textNotifier == nil {
+		return nil
+	}
+	return textNotifier.NotifyText(ctx, text)
 }
 
 type Webhook struct {
@@ -147,6 +178,19 @@ func (t *Telegram) Notify(ctx context.Context, event Event) error {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
+	return t.sendText(ctx, formatTelegramText(event))
+}
+
+func (t *Telegram) NotifyText(ctx context.Context, text string) error {
+	for _, chunk := range splitTelegramText(text, 3900) {
+		if err := t.sendText(ctx, chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *Telegram) sendText(ctx context.Context, text string) error {
 	client := t.Client
 	if client == nil {
 		client = http.DefaultClient
@@ -157,7 +201,7 @@ func (t *Telegram) Notify(ctx context.Context, event Event) error {
 	}
 	body := telegramMessage{
 		ChatID:                t.ChatID,
-		Text:                  formatTelegramText(event),
+		Text:                  text,
 		DisableWebPagePreview: true,
 	}
 	data, err := json.Marshal(body)
@@ -179,6 +223,43 @@ func (t *Telegram) Notify(ctx context.Context, event Event) error {
 		return fmt.Errorf("telegram api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
+}
+
+func splitTelegramText(text string, limit int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	if limit <= 0 || len(text) <= limit {
+		return []string{text}
+	}
+	lines := strings.Split(text, "\n")
+	chunks := []string{}
+	var current strings.Builder
+	for _, line := range lines {
+		if len(line) > limit {
+			if current.Len() > 0 {
+				chunks = append(chunks, strings.TrimSpace(current.String()))
+				current.Reset()
+			}
+			for len(line) > limit {
+				chunks = append(chunks, line[:limit])
+				line = line[limit:]
+			}
+		}
+		if current.Len() > 0 && current.Len()+1+len(line) > limit {
+			chunks = append(chunks, strings.TrimSpace(current.String()))
+			current.Reset()
+		}
+		if current.Len() > 0 {
+			current.WriteByte('\n')
+		}
+		current.WriteString(line)
+	}
+	if current.Len() > 0 {
+		chunks = append(chunks, strings.TrimSpace(current.String()))
+	}
+	return chunks
 }
 
 func formatTelegramText(event Event) string {

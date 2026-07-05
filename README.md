@@ -156,6 +156,7 @@ sudo 3x-abuse-guardctl unblock 198.51.100.10
 - 使用 bbolt 在 `/var/lib/3x-abuse-guard/state.db` 保存本地状态，服务重启后会恢复未过期封禁。
 - CLI 读写状态时短暂打开数据库，避免 daemon 运行期间 `status/unblock/test-event` 因 bbolt 文件锁超时。
 - 支持 Webhook 和 Telegram Bot 通知。
+- 通过 Telegram 每天北京时间 00:00 推送前一天的 access log 行为/活跃统计。
 - 提供 `doctor` 检查 3x-ui API、access log、Xray outbound、routing 和 sniffing。
 - 提供 `print-xray-policy` 输出 3x-ui/Xray 需要加入的配置片段。
 - 支持 Detector Pipeline：`torrent`、`blocked`、`port_scan`、`connection_rate`。
@@ -343,6 +344,8 @@ notify:
 ```
 
 守护进程会向该 URL `POST` JSON 事件，包含 `action`、`kind`、`email`、`ip`、`reason`、`timestamp` 等字段。
+
+如果配置了 Telegram，守护进程会在北京时间每天 00:00 推送前一天的 access log 行为日报。即使服务器系统时间是 UTC，也会按北京时间归档和发送；对应 UTC 发送时间是前一天 16:00。日报按 client email 分组；没有 email 的日志会按来源 IP 分组。统计内容包括连接数、活跃时间、来源 IP、访问目标 Top、入站、出站、协议和类型；它不包含上行/下行流量字节数。
 
 Telegram 的 token 和 chat id 写在 `/etc/3x-abuse-guard/env`，不要写进 `config.yaml`：
 

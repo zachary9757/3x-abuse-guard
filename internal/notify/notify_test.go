@@ -126,3 +126,61 @@ func TestTelegramNotifyReturnsStatusError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestTelegramNotifyTextSendsPlainMessage(t *testing.T) {
+	var got struct {
+		ChatID string `json:"chat_id"`
+		Text   string `json:"text"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	notifier := &Telegram{
+		Token:      "token",
+		ChatID:     "12345",
+		APIBaseURL: server.URL,
+		Client:     server.Client(),
+	}
+	if err := notifier.NotifyText(context.Background(), "daily report"); err != nil {
+		t.Fatal(err)
+	}
+	if got.ChatID != "12345" || got.Text != "daily report" {
+		t.Fatalf("message = %#v", got)
+	}
+}
+
+func TestTelegramNotifyTextSplitsLongMessage(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var got struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Text) > 3900 {
+			t.Fatalf("chunk too long: %d", len(got.Text))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	notifier := &Telegram{
+		Token:      "token",
+		ChatID:     "12345",
+		APIBaseURL: server.URL,
+		Client:     server.Client(),
+	}
+	if err := notifier.NotifyText(context.Background(), strings.Repeat("a", 3901)); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d", calls)
+	}
+}
