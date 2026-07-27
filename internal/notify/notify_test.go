@@ -109,6 +109,19 @@ func TestMultiNotifierCallsWebhookAndTelegram(t *testing.T) {
 	}
 }
 
+func TestWebhookReturnsStatusError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	notifier := NewWebhook(server.URL)
+	err := notifier.Notify(context.Background(), Event{Action: "client_disabled", Timestamp: time.Now()})
+	if err == nil || !strings.Contains(err.Error(), "webhook returned status 503") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestTelegramNotifyReturnsStatusError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad chat", http.StatusBadRequest)

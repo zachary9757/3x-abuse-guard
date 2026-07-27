@@ -29,7 +29,7 @@ type Event struct {
 	Kind     EventKind
 }
 
-var accessLogPattern = regexp.MustCompile(`^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)? from (.+?) accepted ([^:]+):(.+?) \[(.+?)\s+(?:>>|->)\s+(.+?)\](?: email: (.*))?$`)
+var accessLogPattern = regexp.MustCompile(`^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)? from (.+?) accepted ([^:]+):(.+?) \[(.+?)\s+(?:>>|->|==>)\s+(.+?)\](?: email: (.*))?$`)
 
 func ParseLine(line string, torrentTag string, blockedTag string) (Event, bool) {
 	line = strings.TrimSpace(line)

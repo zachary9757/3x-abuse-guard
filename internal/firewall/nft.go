@@ -47,6 +47,9 @@ func (f *NFTables) Block(ctx context.Context, ip string) error {
 	if f.Runner == nil {
 		f.Runner = ExecRunner{}
 	}
+	if err := f.Runner.Run(ctx, "nft", "get", "element", "inet", f.Table, set, "{", ip, "}"); err == nil {
+		return nil
+	}
 	if err := f.Runner.Run(ctx, "nft", "add", "element", "inet", f.Table, set, "{", ip, "}"); err != nil {
 		return fmt.Errorf("nft block failed: %w", err)
 	}

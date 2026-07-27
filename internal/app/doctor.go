@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/zachary9757/3x-abuse-guard/internal/config"
@@ -44,12 +45,27 @@ func Doctor(ctx context.Context, cfg config.Config) []Check {
 
 func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
 	checks := []Check{}
-	checks = append(checks, Check{"outbound "+cfg.Xray.TorrentTag, hasOutbound(xrayConfig, cfg.Xray.TorrentTag), "requires blackhole outbound"})
-	checks = append(checks, Check{"outbound "+cfg.Xray.BlockedTag, hasOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires blackhole outbound"})
-	checks = append(checks, Check{"routing "+cfg.Xray.TorrentTag, hasRoutingOutbound(xrayConfig, cfg.Xray.TorrentTag), "requires protocol bittorrent rule"})
-	checks = append(checks, Check{"routing "+cfg.Xray.BlockedTag, hasRoutingOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires high-risk block rules"})
-	checks = append(checks, Check{"sniffing", hasAnySniffing(xrayConfig), "at least one inbound has sniffing enabled"})
+	accessOK, accessMessage := hasExpectedAccessLog(xrayConfig, cfg.Xray.AccessLog)
+	checks = append(checks, Check{"xray access log", accessOK, accessMessage})
+	checks = append(checks, Check{"outbound " + cfg.Xray.TorrentTag, hasOutbound(xrayConfig, cfg.Xray.TorrentTag), "requires blackhole outbound"})
+	checks = append(checks, Check{"outbound " + cfg.Xray.BlockedTag, hasOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires blackhole outbound"})
+	checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, hasProtocolRoutingOutbound(xrayConfig, cfg.Xray.TorrentTag, "bittorrent"), "requires protocol bittorrent rule"})
+	checks = append(checks, Check{"routing " + cfg.Xray.BlockedTag, hasHighRiskRoutingOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires an ip or port block rule"})
+	sniffingOK, sniffingMessage := hasSniffingOnUserInbounds(xrayConfig)
+	checks = append(checks, Check{"sniffing", sniffingOK, sniffingMessage})
 	return checks
+}
+
+func hasExpectedAccessLog(cfg map[string]any, expected string) (bool, string) {
+	logConfig, _ := cfg["log"].(map[string]any)
+	access := stringValue(logConfig["access"])
+	if access == "" || strings.EqualFold(access, "none") {
+		return false, "Xray access logging is disabled"
+	}
+	if filepath.Base(access) != filepath.Base(expected) {
+		return false, fmt.Sprintf("Xray writes %s but xray.access_log is %s", access, expected)
+	}
+	return true, access
 }
 
 func hasOutbound(cfg map[string]any, tag string) bool {
@@ -65,32 +81,78 @@ func hasOutbound(cfg map[string]any, tag string) bool {
 	return false
 }
 
-func hasRoutingOutbound(cfg map[string]any, tag string) bool {
+func hasProtocolRoutingOutbound(cfg map[string]any, tag string, protocol string) bool {
 	routing, _ := cfg["routing"].(map[string]any)
 	for _, rule := range list(routing["rules"]) {
 		m, ok := rule.(map[string]any)
-		if ok && m["outboundTag"] == tag {
+		if ok && m["outboundTag"] == tag && contains(m["protocol"], protocol) {
 			return true
 		}
 	}
 	return false
 }
 
-func hasAnySniffing(cfg map[string]any) bool {
+func hasHighRiskRoutingOutbound(cfg map[string]any, tag string) bool {
+	routing, _ := cfg["routing"].(map[string]any)
+	for _, rule := range list(routing["rules"]) {
+		m, ok := rule.(map[string]any)
+		if !ok || m["outboundTag"] != tag {
+			continue
+		}
+		if hasValues(m["ip"]) || hasValues(m["port"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSniffingOnUserInbounds(cfg map[string]any) (bool, string) {
+	total := 0
+	enabledCount := 0
 	for _, inbound := range list(cfg["inbounds"]) {
 		m, ok := inbound.(map[string]any)
 		if !ok {
 			continue
 		}
+		if strings.EqualFold(fmt.Sprint(m["tag"]), "api") {
+			continue
+		}
+		total++
 		sniffing, ok := m["sniffing"].(map[string]any)
 		if !ok {
 			continue
 		}
 		if enabled, ok := sniffing["enabled"].(bool); ok && enabled {
+			enabledCount++
+		}
+	}
+	if total == 0 {
+		return false, "no user inbounds found"
+	}
+	return enabledCount == total, fmt.Sprintf("%d/%d user inbounds have sniffing enabled", enabledCount, total)
+}
+
+func contains(value any, expected string) bool {
+	if strings.EqualFold(stringValue(value), expected) {
+		return true
+	}
+	for _, item := range list(value) {
+		if strings.EqualFold(stringValue(item), expected) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasValues(value any) bool {
+	return len(list(value)) > 0 || stringValue(value) != ""
+}
+
+func stringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func list(v any) []any {

@@ -144,6 +144,10 @@ func (w *Webhook) Notify(ctx context.Context, event Event) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("webhook returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
 	return nil
 }
 

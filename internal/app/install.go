@@ -34,6 +34,8 @@ func Install(prefix string, binaryPath string) error {
 THREEX_ABUSE_GUARD_USERNAME=
 THREEX_ABUSE_GUARD_PASSWORD=
 THREEX_ABUSE_GUARD_2FA_CODE=
+THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN=
+THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID=
 `
 		if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
 			return err

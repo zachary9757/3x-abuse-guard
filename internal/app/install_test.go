@@ -42,4 +42,16 @@ func TestInstallWritesFiles(t *testing.T) {
 			t.Fatalf("config missing %q:\n%s", want, configYAML)
 		}
 	}
+	envData, err := os.ReadFile(filepath.Join(root, "etc/3x-abuse-guard/env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN=",
+		"THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID=",
+	} {
+		if !strings.Contains(string(envData), want) {
+			t.Fatalf("env missing %q:\n%s", want, envData)
+		}
+	}
 }

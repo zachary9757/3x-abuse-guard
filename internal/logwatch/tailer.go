@@ -25,9 +25,11 @@ func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
 	}
 
 	var offset int64
+	var previous os.FileInfo
 	if t.StartAtEnd {
 		if st, err := os.Stat(t.Path); err == nil {
 			offset = st.Size()
+			previous = st
 		}
 	}
 
@@ -38,9 +40,10 @@ func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		next, err := t.readFrom(offset, lines)
+		next, current, err := t.readFrom(ctx, offset, previous, lines)
 		if err == nil {
 			offset = next
+			previous = current
 		}
 
 		select {
@@ -51,50 +54,54 @@ func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
 	}
 }
 
-func (t Tailer) readFrom(offset int64, lines chan<- string) (int64, error) {
+func (t Tailer) readFrom(ctx context.Context, offset int64, previous os.FileInfo, lines chan<- string) (int64, os.FileInfo, error) {
 	file, err := os.Open(t.Path)
 	if err != nil {
-		return offset, err
+		return offset, previous, err
 	}
 	defer file.Close()
 
 	st, err := file.Stat()
 	if err != nil {
-		return offset, err
+		return offset, previous, err
+	}
+	if previous != nil && !os.SameFile(previous, st) {
+		offset = 0
 	}
 	if st.Size() < offset {
 		offset = 0
 	} else if offset > 0 {
 		ok, err := isLineBoundary(file, offset)
 		if err != nil {
-			return offset, err
+			return offset, st, err
 		}
 		if !ok {
 			offset = 0
 		}
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
-		return offset, err
+		return offset, st, err
 	}
 
 	reader := bufio.NewReader(file)
+	position := offset
 	for {
 		line, err := reader.ReadString('\n')
-		if line != "" {
-			lines <- line
+		if err == nil {
+			select {
+			case lines <- line:
+				position += int64(len(line))
+			case <-ctx.Done():
+				return position, st, ctx.Err()
+			}
 		}
 		if errors.Is(err, io.EOF) {
-			break
+			return position, st, nil
 		}
 		if err != nil {
-			return offset, err
+			return position, st, err
 		}
 	}
-	pos, err := file.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return offset, err
-	}
-	return pos, nil
 }
 
 func isLineBoundary(file *os.File, offset int64) (bool, error) {

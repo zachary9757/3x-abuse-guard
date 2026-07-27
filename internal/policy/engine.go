@@ -165,7 +165,9 @@ func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, finding detecto
 	if err := e.fw.Block(ctx, ev.SourceIP); err != nil {
 		return err
 	}
-	_ = e.fw.DropConnections(ctx, ev.SourceIP)
+	if err := e.fw.DropConnections(ctx, ev.SourceIP); err != nil {
+		e.logger.Printf("drop existing connections failed for ip=%s: %v", ev.SourceIP, err)
+	}
 	if err := e.store.UpsertBan(state.BanRecord{
 		IP:        ev.SourceIP,
 		Email:     ev.Email,
@@ -175,7 +177,9 @@ func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, finding detecto
 	}); err != nil {
 		return err
 	}
-	_ = e.notifier.Notify(ctx, notificationEvent("ip_blocked", ev, finding, profile, score, threshold, finding.Reason, time.Now()))
+	if err := e.notifier.Notify(ctx, notificationEvent("ip_blocked", ev, finding, profile, score, threshold, finding.Reason, time.Now())); err != nil {
+		e.logger.Printf("notify ip block failed: %v", err)
+	}
 	e.logger.Printf("blocked ip=%s email=%s reason=%s until=%s", ev.SourceIP, ev.Email, finding.Reason, expiresAt.Format(time.RFC3339))
 	return nil
 }
@@ -191,23 +195,38 @@ func (e *Engine) notifyOnce(ctx context.Context, ev logwatch.Event, finding dete
 	e.notified[key] = now
 	e.mu.Unlock()
 
-	_ = e.notifier.Notify(ctx, notificationEvent("score_threshold", ev, finding, profile, score, threshold, reason, now))
+	if err := e.notifier.Notify(ctx, notificationEvent("score_threshold", ev, finding, profile, score, threshold, reason, now)); err != nil {
+		e.mu.Lock()
+		if e.notified[key].Equal(now) {
+			delete(e.notified, key)
+		}
+		e.mu.Unlock()
+		e.logger.Printf("notify score threshold failed: %v", err)
+	}
 }
 
 func (e *Engine) disableClientOnce(ctx context.Context, ev logwatch.Event, finding detector.Finding, profile Profile, score int, threshold int, reason string) error {
+	now := time.Now()
 	e.mu.Lock()
 	last, ok := e.disabled[ev.Email]
-	if ok && time.Since(last) < e.cfg.Window {
+	if ok && now.Sub(last) < e.cfg.Window {
 		e.mu.Unlock()
 		return nil
 	}
-	e.disabled[ev.Email] = time.Now()
+	e.disabled[ev.Email] = now
 	e.mu.Unlock()
 
 	if err := e.panel.DisableClient(ctx, ev.Email); err != nil {
+		e.mu.Lock()
+		if e.disabled[ev.Email].Equal(now) {
+			delete(e.disabled, ev.Email)
+		}
+		e.mu.Unlock()
 		return err
 	}
-	_ = e.notifier.Notify(ctx, notificationEvent("client_disabled", ev, finding, profile, score, threshold, reason, time.Now()))
+	if err := e.notifier.Notify(ctx, notificationEvent("client_disabled", ev, finding, profile, score, threshold, reason, time.Now())); err != nil {
+		e.logger.Printf("notify client disable failed: %v", err)
+	}
 	e.logger.Printf("disabled client email=%s reason=%s", ev.Email, reason)
 	return nil
 }

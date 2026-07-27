@@ -1,13 +1,28 @@
-# 3x-ui / Xray Setup
+# 3x-ui 3.5.0 / Xray Setup
 
-`3x-abuse-guard` depends on Xray access logs and two outbound tags:
+This guide is verified against 3x-ui `v3.5.0`, which bundles Xray-core
+`v26.7.11`.
+
+`3x-abuse-guard` depends on the Xray access log and two outbound tags:
 
 - `TORRENT`: torrent traffic, used for IP blocking and repeat-offender disablement.
-- `blocked`: high-risk traffic, used for visibility and optional notifications.
+- `blocked`: high-risk IP or port traffic, used for visibility and optional notifications.
+
+## Important 3.5.0 Defaults
+
+3x-ui 3.5.0 ships with:
+
+- Xray access logging set to `none`.
+- A `blocked` blackhole outbound.
+- A `bittorrent -> blocked` routing rule.
+
+The default bittorrent rule is not sufficient for this project. A hit routed to
+`blocked` is intentionally treated as a low-confidence event, while a hit routed
+to `TORRENT` triggers the torrent policy.
 
 ## Log Settings
 
-Set Xray logs to:
+Enable the Xray access log:
 
 ```json
 "log": {
@@ -19,14 +34,35 @@ Set Xray logs to:
 }
 ```
 
+3x-ui stores configured Xray log filenames in its log directory. The default is
+`/var/log/x-ui`; `XUI_LOG_FOLDER` can override it. If 3x-ui runs in a container,
+`xray.access_log` in `3x-abuse-guard` must use the host-visible mounted path.
+Confirm the real path before starting the daemon:
+
+```bash
+sudo ls -l /var/log/x-ui/access.log
+sudo tail -n 5 /var/log/x-ui/access.log
+```
+
 ## Outbounds
 
-Add:
+Keep the existing `blocked` outbound. Add `TORRENT` if it is absent:
 
 ```json
 {
   "tag": "TORRENT",
-  "protocol": "blackhole"
+  "protocol": "blackhole",
+  "settings": {}
+}
+```
+
+The resulting configuration must contain both blackhole outbounds:
+
+```json
+{
+  "tag": "TORRENT",
+  "protocol": "blackhole",
+  "settings": {}
 },
 {
   "tag": "blocked",
@@ -37,14 +73,25 @@ Add:
 
 ## Routing Rules
 
-Place these before ordinary direct/proxy rules:
+Keep 3x-ui's internal `api -> api` rule first. Replace the existing
+`bittorrent -> blocked` rule with the following rule, or insert this rule before
+the existing one:
 
 ```json
 {
   "type": "field",
   "protocol": ["bittorrent"],
   "outboundTag": "TORRENT"
-},
+}
+```
+
+Do not leave an earlier `bittorrent -> blocked` rule above it, because Xray uses
+the first matching routing rule.
+
+Place the high-risk rules after the internal API rule and before ordinary
+direct/proxy rules:
+
+```json
 {
   "type": "field",
   "ip": ["geoip:private", "169.254.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10"],
@@ -75,4 +122,25 @@ Enable sniffing on every user-facing inbound:
 }
 ```
 
-`bittorrent` sniffing is not perfect. Encrypted or obfuscated torrent traffic can evade basic protocol detection, so this project should be combined with 3x-ui traffic quotas and IP limits.
+This sniffing schema remains valid with Xray-core `v26.7.11`. Xray recognizes
+bittorrent separately from `destOverride`, so `bittorrent` does not need to be
+added to that list.
+
+Encrypted or obfuscated torrent traffic can still evade protocol detection.
+Combine this project with 3x-ui traffic quotas and IP limits.
+
+## Apply And Verify
+
+Save the Xray configuration and restart Xray from 3x-ui. Then run:
+
+```bash
+sudo 3x-abuse-guardctl doctor
+```
+
+The check must pass for:
+
+- the host access-log file and Xray access-log setting;
+- `TORRENT` and `blocked` blackhole outbounds;
+- `bittorrent -> TORRENT`;
+- at least one IP or port rule routed to `blocked`;
+- sniffing on every user-facing inbound.

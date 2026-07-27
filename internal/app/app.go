@@ -38,6 +38,25 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 		return nil, err
 	}
 
+	policyCfg := buildPolicyConfig(cfg)
+
+	var panelClient policy.Panel
+	if needsPanel(policyCfg) {
+		p, _, err := newPanelClient(cfg)
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+		panelClient = p
+	}
+
+	notifier := newNotifier(cfg)
+	engine := policy.NewEngine(policyCfg, store, fw, panelClient, notifier, logger)
+
+	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine, notifier: notifier, activity: newActivityStats()}, nil
+}
+
+func buildPolicyConfig(cfg config.Config) policy.Config {
 	policyCfg := policy.Config{
 		Window:                 cfg.PolicyWindow(),
 		BlockDuration:          cfg.BlockDuration(),
@@ -59,22 +78,26 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 	case "strict":
 		policyCfg.TorrentBlockOnFirstHit = true
 		policyCfg.TorrentDisableAfter = 1
-	}
-
-	var panelClient policy.Panel
-	if needsPanel(policyCfg) {
-		p, _, err := newPanelClient(cfg)
-		if err != nil {
-			store.Close()
-			return nil, err
+		strictProfile := policyCfg.Profiles["strict"]
+		if strictProfile.Name == "" {
+			strictProfile = policyCfg.Profiles["default"]
+			strictProfile.Name = "strict"
 		}
-		panelClient = p
+		torrentScore := cfg.Detectors.Torrent.Score
+		if torrentScore <= 0 {
+			torrentScore = 100
+		}
+		strictProfile.DisableClientScore = torrentScore
+		if policyCfg.Profiles == nil {
+			policyCfg.Profiles = make(map[string]policy.Profile)
+		}
+		policyCfg.Profiles["strict"] = strictProfile
+		if policyCfg.Assignments.Traffic == nil {
+			policyCfg.Assignments.Traffic = make(map[string]string)
+		}
+		policyCfg.Assignments.Traffic["torrent"] = "strict"
 	}
-
-	notifier := newNotifier(cfg)
-	engine := policy.NewEngine(policyCfg, store, fw, panelClient, notifier, logger)
-
-	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine, notifier: notifier, activity: newActivityStats()}, nil
+	return policyCfg
 }
 
 func newNotifier(cfg config.Config) notify.Notifier {
@@ -103,10 +126,21 @@ func policyProfiles(cfg config.Config) map[string]policy.Profile {
 
 func policyAssignments(cfg config.Config) policy.Assignments {
 	return policy.Assignments{
-		Emails:   cfg.Policy.Assignments.Emails,
-		Inbounds: cfg.Policy.Assignments.Inbounds,
-		Traffic:  cfg.Policy.Assignments.Traffic,
+		Emails:   cloneAssignments(cfg.Policy.Assignments.Emails),
+		Inbounds: cloneAssignments(cfg.Policy.Assignments.Inbounds),
+		Traffic:  cloneAssignments(cfg.Policy.Assignments.Traffic),
 	}
+}
+
+func cloneAssignments(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func needsPanel(cfg policy.Config) bool {

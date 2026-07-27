@@ -2,6 +2,15 @@
 
 `3x-abuse-guard` 是一个面向 3x-ui + Xray 节点的小型防滥用守护进程。它会监听 Xray access log，在防火墙层封禁 BT/种子流量的源 IP，并且可以通过 3x-ui 官方 API 禁用重复违规的客户端。
 
+## 3x-ui 3.5.0 兼容性
+
+当前代码已按 [3x-ui v3.5.0](https://github.com/MHSanaei/3x-ui/releases/tag/v3.5.0) 和其内置的 Xray-core `v26.7.11` 核对：
+
+- Bearer Token、账号密码登录、CSRF、Xray 配置查询接口仍兼容。
+- 禁用客户端优先使用 3.5.0 的 `/panel/api/clients/bulkDisable`；旧版 3x-ui 不支持该接口时自动回退到原有接口。
+- Xray access log 格式仍兼容，并支持 `>>`、`->`、`==>` 三种路由分隔符。
+- **升级 3x-ui 后需要同步检查 Xray 配置。** 3.5.0 默认关闭 access log，并自带 `bittorrent -> blocked`；本项目要求开启 access log，并让 bittorrent 优先进入独立的 `TORRENT` 出站。详见 [3x-ui 3.5.0 / Xray 配置](docs/3x-ui-xray.md)。
+
 V1 刻意保持克制：
 
 - 不做 Web UI
@@ -129,7 +138,7 @@ sudo 3x-abuse-guardctl unblock 198.51.100.10
 | `--token` | 空 / Empty | 写入 3x-ui API Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 / Writes the 3x-ui API token; you can also pre-set `THREEX_ABUSE_GUARD_TOKEN`. |
 | `--username` | 空 / Empty | 写入 3x-ui 面板用户名；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_USERNAME`。 / Writes the 3x-ui panel username; you can also pre-set `THREEX_ABUSE_GUARD_USERNAME`. |
 | `--password` | 空 / Empty | 写入 3x-ui 面板密码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_PASSWORD`。 / Writes the 3x-ui panel password; you can also pre-set `THREEX_ABUSE_GUARD_PASSWORD`. |
-| `--two-factor-code` | 空 / Empty | 写入 3x-ui 两步验证码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_2FA_CODE`。 / Writes the 3x-ui two-factor code; you can also pre-set `THREEX_ABUSE_GUARD_2FA_CODE`. |
+| `--two-factor-code` | 空 / Empty | 写入当前 3x-ui 两步验证码；验证码会过期，不适合无人值守重启，开启 2FA 时优先使用 API Token。 / Writes the current 3x-ui two-factor code. It expires, so API Token auth is preferred for unattended restarts. |
 | `--access-log` | `/var/log/x-ui/access.log` | Xray access log 路径，必须和 3x-ui/Xray 实际日志路径一致。 / Xray access log path; it must match the path configured in 3x-ui/Xray. |
 | `--backend` | `iptables` | 防火墙后端，可选 `iptables`、`nft`、`noop`；`noop` 只记录事件，不封 IP。 / Firewall backend. Valid values are `iptables`, `nft`, and `noop`; `noop` records events without blocking IPs. |
 | `--mode` | `balanced` | 策略模式，可选 `balanced`、`strict`、`observe`。 / Policy mode. Valid values are `balanced`, `strict`, and `observe`. |
@@ -145,7 +154,7 @@ sudo 3x-abuse-guardctl unblock 198.51.100.10
 ## 已完成能力
 
 - 监听 Xray access log，解析来源 IP、目标地址、出站标签和 3x-ui client email。
-- 兼容 Xray access log 中 `[inbound >> outbound]` 和 `[inbound -> outbound]` 两种出站格式。
+- 兼容 Xray access log 中 `[inbound >> outbound]`、`[inbound -> outbound]` 和 `[inbound ==> outbound]` 三种出站格式。
 - 将 `TORRENT` 出站标签视为 BT/种子滥用。
 - 将 `blocked` 出站标签视为高风险访问，但不当作 BT 处理。
 - 第一次 BT 命中默认封禁源 IP 24 小时，并尝试通过 `conntrack` 断开现有连接。
@@ -179,12 +188,13 @@ sudo 3x-abuse-guardctl unblock 198.51.100.10
 
 然后在 3x-ui 的 Xray 配置界面中确认这些内容：
 
+- 3x-ui 3.5.0 默认的 `log.access: "none"` 已改为启用 access log。
 - `outbounds` 中存在 `TORRENT` blackhole 出站。
 - `outbounds` 中存在 `blocked` blackhole 出站。
-- `routing.rules` 中 BT 协议规则放在普通直连/代理规则前面。
-- `routing.rules` 中高危端口、私网地址规则放在普通直连/代理规则前面。
+- 将 3x-ui 默认的 `bittorrent -> blocked` 改为 `bittorrent -> TORRENT`，或把新规则放在它前面。
+- 保留内部 `api -> api` 规则在最前；BT、高危端口和私网规则放在普通直连/代理规则前面。
 - 每个对用户开放的 inbound 开启 sniffing，建议 `HTTP`、`TLS`、`QUIC` 开启，`Route Only` 开启。
-- Xray access log 已开启，并写入 `/var/log/x-ui/access.log` 或你在脚本中指定的路径。
+- Xray access log 写入 `/var/log/x-ui/access.log` 或你在脚本中指定的宿主机可见路径。3x-ui 默认日志目录为 `/var/log/x-ui`，也可能由 `XUI_LOG_FOLDER` 覆盖。
 
 详细说明见 [docs/3x-ui-xray.md](docs/3x-ui-xray.md)。
 
@@ -301,7 +311,7 @@ logging:
 | `panel.token_env` | 从哪个环境变量读取 3x-ui API Token。默认是 `THREEX_ABUSE_GUARD_TOKEN`。 |
 | `panel.username_env` | 从哪个环境变量读取 3x-ui 面板用户名。默认是 `THREEX_ABUSE_GUARD_USERNAME`。 |
 | `panel.password_env` | 从哪个环境变量读取 3x-ui 面板密码。默认是 `THREEX_ABUSE_GUARD_PASSWORD`。 |
-| `panel.two_factor_code_env` | 从哪个环境变量读取 3x-ui 两步验证码。未开启 2FA 时可留空。 |
+| `panel.two_factor_code_env` | 从哪个环境变量读取 3x-ui 两步验证码。验证码会过期；开启 2FA 且需要无人值守重启时，优先使用 Token 鉴权。 |
 | `panel.timeout_seconds` | 调用 3x-ui API 的超时时间。 |
 | `panel.insecure_skip_verify` | 是否跳过面板 HTTPS 证书校验。默认 `false`；只有在本机访问 HTTPS 面板但证书域名不匹配时才建议设为 `true`。 |
 | `panel.restart_xray` | 保留参数，默认不自动重启 Xray，避免误操作。 |
@@ -330,7 +340,7 @@ logging:
 | `notify.telegram_bot_token_env` | 从哪个环境变量读取 Telegram Bot Token。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN`。 |
 | `notify.telegram_chat_id_env` | 从哪个环境变量读取 Telegram Chat ID。默认是 `THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID`。 |
 | `state.path` | 本地状态数据库路径，用于记录事件和封禁。 |
-| `logging.dir` | 守护进程自身日志目录。systemd 日志仍可用 `journalctl` 查看。 |
+| `logging.dir` | 安装时创建的预留日志目录；当前守护进程日志写入 systemd journal，使用 `journalctl` 查看。 |
 
 ## 通知和 Telegram
 
@@ -555,6 +565,12 @@ MIT。
 # English
 
 `3x-abuse-guard` is a small abuse-control daemon for 3x-ui + Xray nodes. It watches the Xray access log, blocks torrent source IPs at the firewall layer, and can disable repeat-offending 3x-ui clients through the official 3x-ui API.
+
+The current code is verified against 3x-ui `v3.5.0` and its bundled Xray-core
+`v26.7.11`. Client disablement uses the 3.5.0 bulk API with a legacy fallback.
+After upgrading, enable the Xray access log and change the default
+`bittorrent -> blocked` route to `bittorrent -> TORRENT`; see
+[docs/3x-ui-xray.md](docs/3x-ui-xray.md).
 
 V1 is intentionally narrow:
 

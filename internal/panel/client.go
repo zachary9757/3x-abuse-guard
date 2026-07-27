@@ -52,6 +52,16 @@ type ClientDetail struct {
 	InboundIDs []int          `json:"inboundIds"`
 }
 
+type bulkSetEnableResult struct {
+	Changed int                   `json:"changed"`
+	Skipped []bulkSetEnableReport `json:"skipped"`
+}
+
+type bulkSetEnableReport struct {
+	Email  string `json:"email"`
+	Reason string `json:"reason"`
+}
+
 type loginRequest struct {
 	Username      string `json:"username"`
 	Password      string `json:"password"`
@@ -152,6 +162,25 @@ func (c *Client) GetClient(ctx context.Context, email string) (ClientDetail, err
 }
 
 func (c *Client) DisableClient(ctx context.Context, email string) error {
+	var result bulkSetEnableResult
+	err := c.do(ctx, http.MethodPost, "/panel/api/clients/bulkDisable", map[string]any{
+		"emails": []string{email},
+	}, &result)
+	if err == nil {
+		for _, skipped := range result.Skipped {
+			if skipped.Email == email {
+				return fmt.Errorf("client %q was not disabled: %s", email, skipped.Reason)
+			}
+		}
+		return nil
+	}
+	if !isStatus(err, http.StatusNotFound) {
+		return err
+	}
+	return c.disableClientLegacy(ctx, email)
+}
+
+func (c *Client) disableClientLegacy(ctx context.Context, email string) error {
 	detail, err := c.GetClient(ctx, email)
 	if err != nil {
 		return err

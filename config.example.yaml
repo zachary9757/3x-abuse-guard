@@ -6,6 +6,7 @@ panel:
   password_env: "THREEX_ABUSE_GUARD_PASSWORD"
   two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
+  insecure_skip_verify: false
   restart_xray: false
 
 xray:
@@ -80,6 +81,8 @@ policy:
 
 notify:
   webhook_url: ""
+  telegram_bot_token_env: "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN"
+  telegram_chat_id_env: "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID"
 
 state:
   path: "/var/lib/3x-abuse-guard/state.db"

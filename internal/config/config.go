@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"time"
@@ -188,12 +189,16 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-func (c Config) Validate() error {
+func (c *Config) Validate() error {
 	if c.Panel.BaseURL == "" {
 		return errors.New("panel.base_url is required")
 	}
-	if _, err := url.ParseRequestURI(c.Panel.BaseURL); err != nil {
+	panelURL, err := url.ParseRequestURI(c.Panel.BaseURL)
+	if err != nil {
 		return fmt.Errorf("panel.base_url is invalid: %w", err)
+	}
+	if (panelURL.Scheme != "http" && panelURL.Scheme != "https") || panelURL.Host == "" {
+		return errors.New("panel.base_url must be an http or https URL with a host")
 	}
 	switch c.Panel.AuthMode {
 	case "", "auto", "token", "login":
@@ -221,6 +226,9 @@ func (c Config) Validate() error {
 	if c.Xray.BlockedTag == "" {
 		return errors.New("xray.blocked_tag is required")
 	}
+	if c.Xray.TorrentTag == c.Xray.BlockedTag {
+		return errors.New("xray.torrent_tag and xray.blocked_tag must be different")
+	}
 	switch c.Firewall.Backend {
 	case "iptables", "nft", "noop":
 	default:
@@ -232,6 +240,14 @@ func (c Config) Validate() error {
 	if c.Firewall.BlockMinutes <= 0 {
 		return errors.New("firewall.block_minutes must be positive")
 	}
+	for _, item := range c.Firewall.BypassIPs {
+		if net.ParseIP(item) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(item); err != nil {
+			return fmt.Errorf("firewall.bypass_ips contains invalid IP or CIDR %q", item)
+		}
+	}
 	if c.Policy.Mode == "" {
 		c.Policy.Mode = "balanced"
 	}
@@ -240,6 +256,25 @@ func (c Config) Validate() error {
 	}
 	if c.Policy.WindowMinutes <= 0 {
 		return errors.New("policy.window_minutes must be positive")
+	}
+	if c.Policy.TorrentDisableClientAfter < 0 || c.Policy.BlockedDisableClientAfter < 0 || c.Policy.BlockedNotifyAfter < 0 {
+		return errors.New("policy hit thresholds must not be negative")
+	}
+	for name, profile := range c.Policy.Profiles {
+		if profile.NotifyScore < 0 || profile.BlockIPScore < 0 || profile.DisableClientScore < 0 {
+			return fmt.Errorf("policy.profiles.%s scores must not be negative", name)
+		}
+	}
+	for assignmentType, assignments := range map[string]map[string]string{
+		"emails":   c.Policy.Assignments.Emails,
+		"inbounds": c.Policy.Assignments.Inbounds,
+		"traffic":  c.Policy.Assignments.Traffic,
+	} {
+		for key, profile := range assignments {
+			if _, ok := c.Policy.Profiles[profile]; !ok {
+				return fmt.Errorf("policy.assignments.%s.%s references unknown profile %q", assignmentType, key, profile)
+			}
+		}
 	}
 	if c.State.Path == "" {
 		return errors.New("state.path is required")

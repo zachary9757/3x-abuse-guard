@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -28,6 +29,30 @@ type recordingNotifier struct {
 
 func (n *recordingNotifier) Notify(_ context.Context, event notify.Event) error {
 	n.events = append(n.events, event)
+	return nil
+}
+
+type flakyPanel struct {
+	calls int
+}
+
+func (p *flakyPanel) DisableClient(_ context.Context, _ string) error {
+	p.calls++
+	if p.calls == 1 {
+		return errors.New("temporary panel failure")
+	}
+	return nil
+}
+
+type flakyNotifier struct {
+	calls int
+}
+
+func (n *flakyNotifier) Notify(_ context.Context, _ notify.Event) error {
+	n.calls++
+	if n.calls == 1 {
+		return errors.New("temporary webhook failure")
+	}
 	return nil
 }
 
@@ -65,6 +90,83 @@ func TestTorrentBlocksAndDisablesAfterThreshold(t *testing.T) {
 	}
 	if len(panel.disabled) != 1 || panel.disabled[0] != "alice" {
 		t.Fatalf("disabled = %v", panel.disabled)
+	}
+}
+
+func TestDisableClientRetriesAfterPanelFailure(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	panel := &flakyPanel{}
+	engine := NewEngine(Config{
+		Window:        time.Hour,
+		BlockDuration: time.Hour,
+		Profiles: map[string]Profile{
+			"default": {
+				Name:               "default",
+				DisableClientScore: 100,
+			},
+		},
+	}, store, &firewall.Noop{}, panel, notify.Noop{}, nil)
+	ev := logwatch.Event{
+		Time:     time.Now(),
+		Kind:     logwatch.KindTorrent,
+		SourceIP: "198.51.100.10",
+		Email:    "alice",
+		Outbound: "TORRENT",
+	}
+
+	if err := engine.Handle(context.Background(), ev); err == nil {
+		t.Fatal("expected first panel call to fail")
+	}
+	ev.Time = ev.Time.Add(time.Second)
+	if err := engine.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if panel.calls != 2 {
+		t.Fatalf("panel calls = %d", panel.calls)
+	}
+}
+
+func TestNotificationRetriesAfterFailure(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	notifier := &flakyNotifier{}
+	engine := NewEngine(Config{
+		Window:        time.Hour,
+		BlockDuration: time.Hour,
+		Profiles: map[string]Profile{
+			"default": {
+				Name:        "default",
+				NotifyScore: 10,
+			},
+		},
+		Assignments: Assignments{
+			Traffic: map[string]string{"blocked": "default"},
+		},
+	}, store, &firewall.Noop{}, nil, notifier, nil)
+	ev := logwatch.Event{
+		Time:     time.Now(),
+		Kind:     logwatch.KindBlocked,
+		SourceIP: "198.51.100.10",
+		Email:    "alice",
+		Outbound: "blocked",
+	}
+
+	if err := engine.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	ev.Time = ev.Time.Add(time.Second)
+	if err := engine.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if notifier.calls != 2 {
+		t.Fatalf("notifier calls = %d", notifier.calls)
 	}
 }
 

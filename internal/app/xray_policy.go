@@ -1,10 +1,24 @@
 package app
 
-const XrayPolicySnippet = `Add these outbounds:
+const XrayPolicySnippet = `3x-ui 3.5.0 disables the Xray access log by default.
+Enable it with filename access.log and make sure the host-visible path matches:
+
+{
+  "log": {
+    "access": "/var/log/x-ui/access.log",
+    "dnsLog": false,
+    "error": "/var/log/x-ui/error.log",
+    "loglevel": "warning",
+    "maskAddress": ""
+  }
+}
+
+Add TORRENT if it is not already present. 3x-ui already provides blocked:
 
 {
   "tag": "TORRENT",
-  "protocol": "blackhole"
+  "protocol": "blackhole",
+  "settings": {}
 },
 {
   "tag": "blocked",
@@ -12,7 +26,9 @@ const XrayPolicySnippet = `Add these outbounds:
   "settings": {}
 }
 
-Put these routing rules before normal direct/proxy rules:
+Keep the internal api -> api rule first. Replace 3x-ui's existing
+bittorrent -> blocked rule with bittorrent -> TORRENT, or put this rule
+before it. Keep all abuse rules before normal direct/proxy rules:
 
 {
   "type": "field",
