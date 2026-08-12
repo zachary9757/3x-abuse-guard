@@ -1,24 +1,48 @@
-# 3x-ui 3.5.0 / Xray Setup
+# 3x-ui 3.6.0 / Xray Setup
 
-This guide is verified against 3x-ui `v3.5.0`, which bundles Xray-core
-`v26.7.11`.
+This guide is verified against 3x-ui `v3.6.0`, which bundles Xray-core
+`v26.7.28`.
 
 `3x-abuse-guard` depends on the Xray access log and two outbound tags:
 
 - `TORRENT`: torrent traffic, used for IP blocking and repeat-offender disablement.
 - `blocked`: high-risk IP or port traffic, used for visibility and optional notifications.
 
-## Important 3.5.0 Defaults
+## Important 3.6.0 Defaults
 
-3x-ui 3.5.0 ships with:
+3x-ui 3.6.0 ships with:
 
 - Xray access logging set to `none`.
 - A `blocked` blackhole outbound.
 - A `bittorrent -> blocked` routing rule.
+- A `geoip:private` block in the `direct` outbound's `finalRules`.
 
 The default bittorrent rule is not sufficient for this project. A hit routed to
 `blocked` is intentionally treated as a low-confidence event, while a hit routed
 to `TORRENT` triggers the torrent policy.
+
+Keep the `direct.settings.finalRules` private-range block added by 3.6.0. It is
+useful defense in depth, but it does not replace the explicit `ip -> blocked`
+routing rule: traffic rejected inside `direct` does not carry the `blocked`
+outbound tag that this project uses for risk accounting.
+
+For an existing `direct` outbound whose `finalRules` only contains `allow`, add
+the private-range block before it:
+
+```json
+"settings": {
+  "domainStrategy": "AsIs",
+  "finalRules": [
+    {
+      "action": "block",
+      "ip": ["geoip:private"]
+    },
+    {
+      "action": "allow"
+    }
+  ]
+}
+```
 
 ## Log Settings
 
@@ -122,7 +146,7 @@ Enable sniffing on every user-facing inbound:
 }
 ```
 
-This sniffing schema remains valid with Xray-core `v26.7.11`. Xray recognizes
+This sniffing schema remains valid with Xray-core `v26.7.28`. Xray recognizes
 bittorrent separately from `destOverride`, so `bittorrent` does not need to be
 added to that list.
 
@@ -142,5 +166,6 @@ The check must pass for:
 - the host access-log file and Xray access-log setting;
 - `TORRENT` and `blocked` blackhole outbounds;
 - `bittorrent -> TORRENT`;
+- no earlier `bittorrent` rule targeting `blocked` or another outbound;
 - at least one IP or port rule routed to `blocked`;
 - sniffing on every user-facing inbound.

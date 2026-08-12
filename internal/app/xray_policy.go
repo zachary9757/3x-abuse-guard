@@ -1,6 +1,6 @@
 package app
 
-const XrayPolicySnippet = `3x-ui 3.5.0 disables the Xray access log by default.
+const XrayPolicySnippet = `3x-ui 3.6.0 disables the Xray access log by default.
 Enable it with filename access.log and make sure the host-visible path matches:
 
 {
@@ -24,6 +24,18 @@ Add TORRENT if it is not already present. 3x-ui already provides blocked:
   "tag": "blocked",
   "protocol": "blackhole",
   "settings": {}
+}
+
+3x-ui 3.6.0 also adds a geoip:private block to direct.settings.finalRules.
+Keep that defense-in-depth rule. It does not replace the explicit blocked
+routing rules below because it does not produce the blocked outbound tag.
+
+"settings": {
+  "domainStrategy": "AsIs",
+  "finalRules": [
+    {"action": "block", "ip": ["geoip:private"]},
+    {"action": "allow"}
+  ]
 }
 
 Keep the internal api -> api rule first. Replace 3x-ui's existing

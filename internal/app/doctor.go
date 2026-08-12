@@ -49,7 +49,8 @@ func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
 	checks = append(checks, Check{"xray access log", accessOK, accessMessage})
 	checks = append(checks, Check{"outbound " + cfg.Xray.TorrentTag, hasOutbound(xrayConfig, cfg.Xray.TorrentTag), "requires blackhole outbound"})
 	checks = append(checks, Check{"outbound " + cfg.Xray.BlockedTag, hasOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires blackhole outbound"})
-	checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, hasProtocolRoutingOutbound(xrayConfig, cfg.Xray.TorrentTag, "bittorrent"), "requires protocol bittorrent rule"})
+	torrentOK, torrentMessage := hasFirstProtocolRoutingOutbound(xrayConfig, cfg.Xray.TorrentTag, "bittorrent")
+	checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, torrentOK, torrentMessage})
 	checks = append(checks, Check{"routing " + cfg.Xray.BlockedTag, hasHighRiskRoutingOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires an ip or port block rule"})
 	sniffingOK, sniffingMessage := hasSniffingOnUserInbounds(xrayConfig)
 	checks = append(checks, Check{"sniffing", sniffingOK, sniffingMessage})
@@ -81,15 +82,23 @@ func hasOutbound(cfg map[string]any, tag string) bool {
 	return false
 }
 
-func hasProtocolRoutingOutbound(cfg map[string]any, tag string, protocol string) bool {
+func hasFirstProtocolRoutingOutbound(cfg map[string]any, tag string, protocol string) (bool, string) {
 	routing, _ := cfg["routing"].(map[string]any)
 	for _, rule := range list(routing["rules"]) {
 		m, ok := rule.(map[string]any)
-		if ok && m["outboundTag"] == tag && contains(m["protocol"], protocol) {
-			return true
+		if !ok || !contains(m["protocol"], protocol) {
+			continue
 		}
+		actual := stringValue(m["outboundTag"])
+		if actual == tag {
+			return true, fmt.Sprintf("first %s rule routes to %s", protocol, tag)
+		}
+		if actual == "" {
+			actual = "an unsupported target"
+		}
+		return false, fmt.Sprintf("first %s rule routes to %s; move %s before it", protocol, actual, tag)
 	}
-	return false
+	return false, fmt.Sprintf("requires protocol %s rule routed to %s", protocol, tag)
 }
 
 func hasHighRiskRoutingOutbound(cfg map[string]any, tag string) bool {
@@ -114,7 +123,7 @@ func hasSniffingOnUserInbounds(cfg map[string]any) (bool, string) {
 		if !ok {
 			continue
 		}
-		if strings.EqualFold(fmt.Sprint(m["tag"]), "api") {
+		if !isUserFacingInbound(m) {
 			continue
 		}
 		total++
@@ -130,6 +139,15 @@ func hasSniffingOnUserInbounds(cfg map[string]any) (bool, string) {
 		return false, "no user inbounds found"
 	}
 	return enabledCount == total, fmt.Sprintf("%d/%d user inbounds have sniffing enabled", enabledCount, total)
+}
+
+func isUserFacingInbound(inbound map[string]any) bool {
+	if strings.EqualFold(stringValue(inbound["tag"]), "api") {
+		return false
+	}
+	protocol := stringValue(inbound["protocol"])
+	listen := strings.Trim(stringValue(inbound["listen"]), "[]")
+	return !strings.EqualFold(protocol, "socks") || (listen != "127.0.0.1" && listen != "::1")
 }
 
 func contains(value any, expected string) bool {
