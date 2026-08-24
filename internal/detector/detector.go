@@ -146,7 +146,7 @@ func (p *Pipeline) detectPortScan(ev logwatch.Event, now time.Time) (Finding, bo
 	if !ok {
 		return Finding{}, false
 	}
-	key := ev.SourceIP
+	key := actorKey(ev)
 	window := minutes(p.cfg.PortScan.WindowMinutes, 5)
 	cutoff := now.Add(-window)
 	observations := appendRecent(p.portScanHistory[key], cutoff, observation{at: now, port: port, target: ev.Target})

@@ -1,6 +1,6 @@
-# 3x-ui 3.6.0 / Xray Setup
+# 3x-ui 3.7.0 / Xray Setup
 
-This guide is verified against 3x-ui `v3.6.0`, which bundles Xray-core
+This guide is verified against 3x-ui `v3.7.0`, which bundles Xray-core
 `v26.7.28`.
 
 `3x-abuse-guard` depends on the Xray access log and two outbound tags:
@@ -8,9 +8,9 @@ This guide is verified against 3x-ui `v3.6.0`, which bundles Xray-core
 - `TORRENT`: torrent traffic, used for IP blocking and repeat-offender disablement.
 - `blocked`: high-risk IP or port traffic, used for visibility and optional notifications.
 
-## Important 3.6.0 Defaults
+## Important 3.7.0 Defaults
 
-3x-ui 3.6.0 ships with:
+The relevant 3x-ui 3.7.0 defaults are unchanged from 3.6.0:
 
 - Xray access logging set to `none`.
 - A `blocked` blackhole outbound.
@@ -21,7 +21,7 @@ The default bittorrent rule is not sufficient for this project. A hit routed to
 `blocked` is intentionally treated as a low-confidence event, while a hit routed
 to `TORRENT` triggers the torrent policy.
 
-Keep the `direct.settings.finalRules` private-range block added by 3.6.0. It is
+Keep the `direct.settings.finalRules` private-range block. It is
 useful defense in depth, but it does not replace the explicit `ip -> blocked`
 routing rule: traffic rejected inside `direct` does not carry the `blocked`
 outbound tag that this project uses for risk accounting.
@@ -153,6 +153,15 @@ added to that list.
 Encrypted or obfuscated torrent traffic can still evade protocol detection.
 Combine this project with 3x-ui traffic quotas and IP limits.
 
+## Native AmneziaWG
+
+3x-ui 3.7.0 relays Native AmneziaWG traffic through an internal loopback
+SOCKS5 inbound so Xray routing, sniffing, and the client email remain available.
+`3x-abuse-guard` therefore records matching events and can notify or disable the
+client by email. The Xray access log sees the relay's loopback source address,
+not the client's public address, so the loopback address remains in
+`firewall.bypass_ips` and is never firewall-blocked.
+
 ## Apply And Verify
 
 Save the Xray configuration and restart Xray from 3x-ui. Then run:
@@ -160,6 +169,10 @@ Save the Xray configuration and restart Xray from 3x-ui. Then run:
 ```bash
 sudo 3x-abuse-guardctl doctor
 ```
+
+On 3x-ui 3.7.0, the configured API token must have the `admin` scope. A
+`monitor` or `node-sync` token cannot read the assembled Xray config used by
+this check.
 
 The check must pass for:
 

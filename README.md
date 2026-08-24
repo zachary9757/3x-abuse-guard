@@ -2,15 +2,16 @@
 
 `3x-abuse-guard` 是一个面向 3x-ui + Xray 节点的小型防滥用守护进程。它会监听 Xray access log，在防火墙层封禁 BT/种子流量的源 IP，并且可以通过 3x-ui 官方 API 禁用重复违规的客户端。
 
-## 3x-ui 3.6.0 兼容性
+## 3x-ui 3.7.0 兼容性
 
-当前代码已按 [3x-ui v3.6.0](https://github.com/MHSanaei/3x-ui/releases/tag/v3.6.0) 和其内置的 Xray-core `v26.7.28` 核对：
+当前代码已按 [3x-ui v3.7.0](https://github.com/MHSanaei/3x-ui/releases/tag/v3.7.0) 和其内置的 Xray-core `v26.7.28` 核对：
 
-- Bearer Token、账号密码登录、CSRF、Xray 配置查询接口仍兼容。
-- 禁用客户端继续使用 3.6.0 的 `/panel/api/clients/bulkDisable`；旧版 3x-ui 不支持该接口时自动回退到原有接口。
+- Bearer Token、账号密码登录、CSRF、Xray 配置查询接口仍兼容。3.7.0 Token 必须使用 `admin` scope；`monitor` 和 `node-sync` 权限不足。
+- 禁用客户端继续使用 3.7.0 的 `/panel/api/clients/bulkDisable`；旧版 3x-ui 不支持该接口时自动回退到原有接口。
 - Xray access log 格式仍兼容，并支持 `>>`、`->`、`==>` 三种路由分隔符。
 - `doctor` 会确认第一条 bittorrent 规则确实指向 `TORRENT`，避免 3x-ui 默认的 `bittorrent -> blocked` 提前命中。
-- **升级 3x-ui 后需要同步检查 Xray 配置。** 3.6.0 默认关闭 access log，自带 `bittorrent -> blocked`，并在 `direct.finalRules` 中增加私网阻断；应保留私网阻断，同时让 bittorrent 优先进入独立的 `TORRENT` 出站。详见 [3x-ui 3.6.0 / Xray 配置](docs/3x-ui-xray.md)。
+- Native AmneziaWG 通过本机 SOCKS5 relay 进入 Xray；带 email 的事件仍会计分、通知并可禁用客户端，但日志来源是回环地址，因此不会对客户端真实公网 IP 执行防火墙封禁。
+- **升级 3x-ui 后需要同步检查 Xray 配置。** 3.7.0 的相关默认值与 3.6.0 相同：默认关闭 access log，自带 `bittorrent -> blocked`，并保留 `direct.finalRules` 私网阻断。详见 [3x-ui 3.7.0 / Xray 配置](docs/3x-ui-xray.md)。
 
 V1 刻意保持克制：
 
@@ -23,6 +24,8 @@ V1 刻意保持克制：
 ## 一键安装（推荐）
 
 如果你的 3x-ui/Xpanel 有 API Token，推荐用 Token 安装：
+
+3x-ui 3.7.0 请创建 `admin` scope Token。Token 明文只在创建时显示一次；如果设置了过期时间，请在到期前完成轮换。再次运行 `x-ui setting -getApiToken` 会轮换 `cli-fallback` Token，并立即使旧值失效。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
@@ -134,9 +137,9 @@ sudo 3x-abuse-guardctl unblock 198.51.100.10
 | 参数 / Option | 默认值 / Default | 作用 / Description |
 | --- | --- | --- |
 | `--panel-url` | `http://127.0.0.1:2053/` | 3x-ui 面板地址，必须是守护进程所在服务器能访问的地址。 / 3x-ui panel URL reachable from the server running the daemon. |
-| `--auth-mode` | `auto` | 面板鉴权方式。`auto` 优先用 Token，缺少 Token 时用账号密码；也可以指定 `token` 或 `login`。 / Panel authentication mode. `auto` prefers token auth and falls back to login credentials; `token` and `login` are explicit modes. |
+| `--auth-mode` | `auto` | 面板鉴权方式。`auto` 优先用 Token，缺少 Token 时用账号密码；也可以指定 `token` 或 `login`。 / Panel authentication mode. `auto` uses token auth when configured and uses login credentials only when no token is configured; `token` and `login` are explicit modes. |
 | `--panel-insecure-skip-verify` | 关闭 / Off | 跳过 3x-ui 面板 HTTPS 证书校验。仅建议用于本机自签证书或证书域名不匹配场景。 / Skips HTTPS certificate verification for the panel. Only use for local self-signed certificates or certificate-name mismatch cases. |
-| `--token` | 空 / Empty | 写入 3x-ui API Token；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 / Writes the 3x-ui API token; you can also pre-set `THREEX_ABUSE_GUARD_TOKEN`. |
+| `--token` | 空 / Empty | 写入 3x-ui API Token；3.7.0 必须是 `admin` scope。也可以提前设置环境变量 `THREEX_ABUSE_GUARD_TOKEN`。 / Writes the 3x-ui API token; 3.7.0 requires the `admin` scope. You can also pre-set `THREEX_ABUSE_GUARD_TOKEN`. |
 | `--username` | 空 / Empty | 写入 3x-ui 面板用户名；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_USERNAME`。 / Writes the 3x-ui panel username; you can also pre-set `THREEX_ABUSE_GUARD_USERNAME`. |
 | `--password` | 空 / Empty | 写入 3x-ui 面板密码；也可以提前设置环境变量 `THREEX_ABUSE_GUARD_PASSWORD`。 / Writes the 3x-ui panel password; you can also pre-set `THREEX_ABUSE_GUARD_PASSWORD`. |
 | `--two-factor-code` | 空 / Empty | 写入当前 3x-ui 两步验证码；验证码会过期，不适合无人值守重启，开启 2FA 时优先使用 API Token。 / Writes the current 3x-ui two-factor code. It expires, so API Token auth is preferred for unattended restarts. |
@@ -189,11 +192,11 @@ sudo 3x-abuse-guardctl unblock 198.51.100.10
 
 然后在 3x-ui 的 Xray 配置界面中确认这些内容：
 
-- 3x-ui 3.6.0 默认的 `log.access: "none"` 已改为启用 access log。
+- 3x-ui 3.7.0 默认的 `log.access: "none"` 已改为启用 access log。
 - `outbounds` 中存在 `TORRENT` blackhole 出站。
 - `outbounds` 中存在 `blocked` blackhole 出站。
 - 将 3x-ui 默认的 `bittorrent -> blocked` 改为 `bittorrent -> TORRENT`，或把新规则放在它前面。
-- 保留 3x-ui 3.6.0 在 `direct.settings.finalRules` 中增加的 `geoip:private` 阻断；它是额外防护，不能替代显式的 `ip/port -> blocked` 路由。
+- 保留 3x-ui 3.7.0 在 `direct.settings.finalRules` 中提供的 `geoip:private` 阻断；它是额外防护，不能替代显式的 `ip/port -> blocked` 路由。
 - 保留内部 `api -> api` 规则在最前；BT、高危端口和私网规则放在普通直连/代理规则前面。
 - 每个对用户开放的 inbound 开启 sniffing，建议 `HTTP`、`TLS`、`QUIC` 开启，`Route Only` 开启。
 - Xray access log 写入 `/var/log/x-ui/access.log` 或你在脚本中指定的宿主机可见路径。3x-ui 默认日志目录为 `/var/log/x-ui`，也可能由 `XUI_LOG_FOLDER` 覆盖。
@@ -309,8 +312,8 @@ logging:
 | 参数 | 作用 |
 | --- | --- |
 | `panel.base_url` | 3x-ui 面板 API 地址。通常填本机地址，例如 `http://127.0.0.1:2053/`。 |
-| `panel.auth_mode` | 面板鉴权方式：`auto`、`token` 或 `login`。`auto` 优先使用 Token，缺少 Token 时使用账号密码登录。 |
-| `panel.token_env` | 从哪个环境变量读取 3x-ui API Token。默认是 `THREEX_ABUSE_GUARD_TOKEN`。 |
+| `panel.auth_mode` | 面板鉴权方式：`auto`、`token` 或 `login`。`auto` 优先使用 Token，仅在 Token 为空时使用账号密码；配置了失效或越权 Token 时不会自动回退。 |
+| `panel.token_env` | 从哪个环境变量读取 3x-ui API Token。默认是 `THREEX_ABUSE_GUARD_TOKEN`；3.7.0 必须使用 `admin` scope。 |
 | `panel.username_env` | 从哪个环境变量读取 3x-ui 面板用户名。默认是 `THREEX_ABUSE_GUARD_USERNAME`。 |
 | `panel.password_env` | 从哪个环境变量读取 3x-ui 面板密码。默认是 `THREEX_ABUSE_GUARD_PASSWORD`。 |
 | `panel.two_factor_code_env` | 从哪个环境变量读取 3x-ui 两步验证码。验证码会过期；开启 2FA 且需要无人值守重启时，优先使用 Token 鉴权。 |
@@ -327,7 +330,7 @@ logging:
 | `firewall.backend` | 防火墙后端：`iptables`、`nft` 或 `noop`。 |
 | `firewall.chain` | 本项目维护的防火墙链名。默认 `THREEX_ABUSE_GUARD`。 |
 | `firewall.block_minutes` | IP 封禁时长，默认 `1440` 分钟，也就是 24 小时。 |
-| `firewall.bypass_ips` | 白名单 IP 或 CIDR，命中后不会被封禁。建议加入本机、内网、中转出口。 |
+| `firewall.bypass_ips` | 不执行防火墙封禁的 IP 或 CIDR。带 client email 的事件仍会计分、通知并可能禁用客户端；没有 client email 的白名单事件会忽略。建议保留本机回环地址。 |
 | `policy.mode` | 策略模式：`balanced` 使用下方阈值；`strict` 会把 BT 禁用阈值压到 1；`observe` 不封 IP、不禁用 client，只记录/通知。 |
 | `policy.window_minutes` | 统计窗口。同一 email 在这个时间窗口内累计违规。 |
 | `policy.torrent_ip_block_on_first_hit` | BT 第一次命中是否立即封源 IP。 |
@@ -568,10 +571,14 @@ MIT。
 
 `3x-abuse-guard` is a small abuse-control daemon for 3x-ui + Xray nodes. It watches the Xray access log, blocks torrent source IPs at the firewall layer, and can disable repeat-offending 3x-ui clients through the official 3x-ui API.
 
-The current code is verified against 3x-ui `v3.6.0` and its bundled Xray-core
-`v26.7.28`. Client disablement uses the 3.6.0 bulk API with a legacy fallback.
+The current code is verified against 3x-ui `v3.7.0` and its bundled Xray-core
+`v26.7.28`. Client disablement uses the 3.7.0 bulk API with a legacy fallback.
+API tokens must have the `admin` scope; `monitor` and `node-sync` tokens cannot
+read the Xray config or call the bulk-disable endpoint. Native AmneziaWG relay
+events retain client-email enforcement, but their loopback source address is
+never firewall-blocked.
 After upgrading, enable the Xray access log and change the default
-`bittorrent -> blocked` route to `bittorrent -> TORRENT`. Keep the 3.6.0
+`bittorrent -> blocked` route to `bittorrent -> TORRENT`. Keep the 3.7.0
 `geoip:private` block in `direct.settings.finalRules`; see
 [docs/3x-ui-xray.md](docs/3x-ui-xray.md).
 
@@ -611,6 +618,11 @@ sudo 3x-abuse-guard install
 ```
 
 Set either a 3x-ui API token or panel login credentials:
+
+On 3x-ui 3.7.0, create an `admin`-scoped token. Its plaintext is shown only
+once; rotate the value in the environment file before an expiring token lapses.
+Running `x-ui setting -getApiToken` again rotates the `cli-fallback` token and
+immediately invalidates its previous value.
 
 ```bash
 sudo nano /etc/3x-abuse-guard/env

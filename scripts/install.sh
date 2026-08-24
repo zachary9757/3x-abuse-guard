@@ -38,7 +38,7 @@ usage() {
                              面板鉴权方式，默认 auto；优先 token，缺少 token 时用账号密码
   --panel-insecure-skip-verify
                              跳过 3x-ui 面板 HTTPS 证书校验，适合本机自签证书或证书域名不匹配
-  --token TOKEN              3x-ui API Token；也可用环境变量 THREEX_ABUSE_GUARD_TOKEN
+  --token TOKEN              3x-ui admin API Token；也可用环境变量 THREEX_ABUSE_GUARD_TOKEN
   --username USERNAME        3x-ui 面板用户名；也可用环境变量 THREEX_ABUSE_GUARD_USERNAME
   --password PASSWORD        3x-ui 面板密码；也可用环境变量 THREEX_ABUSE_GUARD_PASSWORD
   --two-factor-code CODE     3x-ui 两步验证码；也可用环境变量 THREEX_ABUSE_GUARD_2FA_CODE
@@ -362,7 +362,7 @@ prompt_auth_if_needed() {
   fi
   if [ -t 0 ]; then
     if [ "$AUTH_MODE" != "login" ]; then
-      printf '请输入 3x-ui API Token（可留空，改用账号密码）：'
+      printf '请输入 3x-ui admin API Token（可留空，改用账号密码）：'
       read -r TOKEN
     fi
     if [ -z "$TOKEN" ] && [ "$AUTH_MODE" != "token" ]; then
@@ -548,7 +548,7 @@ print_next_steps() {
 安装完成。
 
 下一步：
-1. 在 3x-ui 中确认 Xray access log、TORRENT/blocked 出站、routing 规则和 sniffing 已配置。
+1. 确认 3x-ui 3.7.0 Token 使用 admin scope，并检查 Xray access log、TORRENT/blocked 出站、routing 规则和 sniffing。
    查看配置片段：
      3x-abuse-guard print-xray-policy
 

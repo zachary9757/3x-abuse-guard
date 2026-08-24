@@ -170,7 +170,48 @@ func TestNotificationRetriesAfterFailure(t *testing.T) {
 	}
 }
 
-func TestBypassIP(t *testing.T) {
+func TestBypassIPSkipsBlockButKeepsClientEnforcement(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fw := &firewall.Noop{}
+	panel := &fakePanel{}
+	engine := NewEngine(Config{
+		Window:                 time.Hour,
+		BlockDuration:          time.Hour,
+		TorrentBlockOnFirstHit: true,
+		TorrentDisableAfter:    1,
+		BypassIPs:              []string{"127.0.0.1"},
+	}, store, fw, panel, notify.Noop{}, nil)
+
+	if err := engine.Handle(context.Background(), logwatch.Event{
+		Time:     time.Now(),
+		Kind:     logwatch.KindTorrent,
+		SourceIP: "127.0.0.1",
+		Email:    "alice",
+		Inbound:  "amneziawg-1",
+		Outbound: "TORRENT",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fw.Blocked) != 0 {
+		t.Fatalf("blocked = %v", fw.Blocked)
+	}
+	if len(panel.disabled) != 1 || panel.disabled[0] != "alice" {
+		t.Fatalf("disabled = %v", panel.disabled)
+	}
+	events, err := store.RecentEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Email != "alice" || events[0].SourceIP != "127.0.0.1" {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestBypassIPWithoutClientIdentityIsIgnored(t *testing.T) {
 	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -181,20 +222,23 @@ func TestBypassIP(t *testing.T) {
 		Window:                 time.Hour,
 		BlockDuration:          time.Hour,
 		TorrentBlockOnFirstHit: true,
-		TorrentDisableAfter:    1,
-		BypassIPs:              []string{"198.51.100.0/24"},
+		BypassIPs:              []string{"127.0.0.1"},
 	}, store, fw, nil, notify.Noop{}, nil)
 
 	if err := engine.Handle(context.Background(), logwatch.Event{
 		Time:     time.Now(),
 		Kind:     logwatch.KindTorrent,
-		SourceIP: "198.51.100.10",
-		Email:    "alice",
+		SourceIP: "127.0.0.1",
+		Outbound: "TORRENT",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(fw.Blocked) != 0 {
-		t.Fatalf("blocked = %v", fw.Blocked)
+	events, err := store.RecentEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %#v", events)
 	}
 }
 

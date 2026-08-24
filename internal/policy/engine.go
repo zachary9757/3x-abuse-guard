@@ -100,8 +100,9 @@ func NewEngine(cfg Config, store Store, fw firewall.Firewall, panel Panel, notif
 }
 
 func (e *Engine) Handle(ctx context.Context, ev logwatch.Event) error {
-	if e.isBypassed(ev.SourceIP) {
-		e.logger.Printf("skip bypassed ip %s for %s", ev.SourceIP, ev.Kind)
+	bypassIPBlock := e.isBypassed(ev.SourceIP)
+	if bypassIPBlock && ev.Email == "" {
+		e.logger.Printf("skip bypassed ip %s without client identity for %s", ev.SourceIP, ev.Kind)
 		return nil
 	}
 
@@ -113,14 +114,14 @@ func (e *Engine) Handle(ctx context.Context, ev logwatch.Event) error {
 		return nil
 	}
 	for _, finding := range findings {
-		if err := e.applyFinding(ctx, ev, finding); err != nil {
+		if err := e.applyFinding(ctx, ev, finding, bypassIPBlock); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding detector.Finding) error {
+func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding detector.Finding, bypassIPBlock bool) error {
 	profile := e.profileFor(ev, finding.Kind)
 	if _, err := e.store.RecordEvent(state.EventRecord{
 		Kind:      finding.Kind,
@@ -145,7 +146,8 @@ func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding de
 	if profile.NotifyScore > 0 && total >= profile.NotifyScore {
 		e.notifyOnce(ctx, ev, finding, profile, total, profile.NotifyScore, fmt.Sprintf("%s score threshold reached: %d", profile.Name, total), finding.CreatedAt)
 	}
-	if !e.cfg.ObserveOnly && (finding.BlockIP || (profile.BlockIPScore > 0 && total >= profile.BlockIPScore)) {
+	shouldBlockIP := finding.BlockIP || (profile.BlockIPScore > 0 && total >= profile.BlockIPScore)
+	if !e.cfg.ObserveOnly && shouldBlockIP && !bypassIPBlock {
 		threshold := profile.BlockIPScore
 		if threshold == 0 && finding.BlockIP {
 			threshold = finding.Score

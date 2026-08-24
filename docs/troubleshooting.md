@@ -8,7 +8,8 @@ If you installed with `scripts/install.sh`, use the helper command. It loads `/e
 sudo 3x-abuse-guardctl doctor
 ```
 
-Use API token auth when your panel supports it:
+Use API token auth when your panel supports it. 3x-ui 3.7.0 requires an
+`admin`-scoped token for this project:
 
 ```bash
 export THREEX_ABUSE_GUARD_TOKEN=your-token
@@ -26,6 +27,25 @@ For systemd, put it in:
 ```text
 /etc/3x-abuse-guard/env
 ```
+
+## `doctor` returns 401 or 403 after upgrading to 3x-ui 3.7.0
+
+Check that the configured token:
+
+- has the `admin` scope, not `monitor` or `node-sync`;
+- is enabled and has not expired;
+- is still current if `x-ui setting -getApiToken` was run again, because that
+  command rotates the `cli-fallback` token and invalidates its previous value.
+
+Update `/etc/3x-abuse-guard/env`, then restart and verify:
+
+```bash
+sudo systemctl restart 3x-abuse-guard
+sudo 3x-abuse-guardctl doctor
+```
+
+`panel.auth_mode: auto` only falls back to login when the Token variable is
+empty. It does not retry login when a configured Token is invalid or forbidden.
 
 ## `doctor` reports `x509: cannot validate certificate for 127.0.0.1`
 
@@ -56,13 +76,18 @@ Check:
 - Routing has `protocol: ["bittorrent"] -> TORRENT`.
 - The `TORRENT` outbound exists and uses `blackhole`.
 
+For Native AmneziaWG, Xray logs the internal loopback relay as the source IP.
+Keep `127.0.0.1`/`::1` in `firewall.bypass_ips`; email-based scoring and client
+disablement still work, but public-source IP blocking is unavailable for that
+relay path.
+
 ## IP is blocked but client is not disabled
 
 Check:
 
 - Access log line includes `email: <client-email>`.
 - `policy.torrent_disable_client_after` is greater than 0.
-- 3x-ui API token is valid, or login auth username/password is valid.
+- 3x-ui API token is valid and has `admin` scope, or login auth username/password is valid.
 - Client exists in 3x-ui with the same email.
 
 ## Port scan or connection-rate detector is too sensitive
