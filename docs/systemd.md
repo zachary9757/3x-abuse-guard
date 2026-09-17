@@ -8,7 +8,7 @@ sudo install -m 0755 3x-abuse-guard /usr/local/bin/3x-abuse-guard
 sudo 3x-abuse-guard install
 ```
 
-Edit the panel auth environment file. On 3x-ui 3.7.0, use an `admin`-scoped
+Edit the panel auth environment file. On 3x-ui 3.7.0 and later, use an `admin`-scoped
 API token; `monitor` and `node-sync` scopes do not grant the required endpoints:
 
 ```bash

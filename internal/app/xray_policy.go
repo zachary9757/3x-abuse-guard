@@ -1,6 +1,6 @@
 package app
 
-const XrayPolicySnippet = `3x-ui 3.7.0 disables the Xray access log by default.
+const XrayPolicySnippet = `3x-ui 3.8.5 (Xray-core v26.9.9) disables the Xray access log by default.
 Enable it with filename access.log and make sure the host-visible path matches:
 
 {
@@ -26,7 +26,7 @@ Add TORRENT if it is not already present. 3x-ui already provides blocked:
   "settings": {}
 }
 
-3x-ui 3.7.0 includes a geoip:private block in direct.settings.finalRules.
+3x-ui 3.8.5 includes a geoip:private block in direct.settings.finalRules.
 Keep that defense-in-depth rule. It does not replace the explicit blocked
 routing rules below because it does not produce the blocked outbound tag.
 
@@ -75,4 +75,8 @@ For each user-facing inbound, enable sniffing:
 Native AmneziaWG uses an internal loopback SOCKS5 relay. Keep 127.0.0.1 and
 ::1 in firewall.bypass_ips: matching events with a client email are still
 scored and can disable the client, but the loopback relay must not be blocked.
+Per-client AmneziaWG IPv6 egress can prepend amneziawg-v6-* routes ahead of
+these abuse rules. Resolve any routing AmneziaWG failure from doctor in the
+panel before relying on this policy. Doctor also checks Xray runtime errors;
+generated config alone does not prove the running core applied it.
 `

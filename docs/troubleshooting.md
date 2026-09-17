@@ -8,7 +8,7 @@ If you installed with `scripts/install.sh`, use the helper command. It loads `/e
 sudo 3x-abuse-guardctl doctor
 ```
 
-Use API token auth when your panel supports it. 3x-ui 3.7.0 requires an
+Use API token auth when your panel supports it. 3x-ui 3.7.0 and later require an
 `admin`-scoped token for this project:
 
 ```bash
@@ -28,7 +28,7 @@ For systemd, put it in:
 /etc/3x-abuse-guard/env
 ```
 
-## `doctor` returns 401 or 403 after upgrading to 3x-ui 3.7.0
+## `doctor` returns 401 or 403 after upgrading 3x-ui
 
 Check that the configured token:
 
@@ -46,6 +46,27 @@ sudo 3x-abuse-guardctl doctor
 
 `panel.auth_mode: auto` only falls back to login when the Token variable is
 empty. It does not retry login when a configured Token is invalid or forbidden.
+
+## `doctor` reports `xray runtime` failure
+
+Check the Xray state and error shown by 3x-ui. In 3.8.5, `config refused` can
+mean the new configuration has conflicting ports while the old core remains
+running. Resolve the reported conflict and reapply the configuration before
+rerunning `doctor`. A healthy generated config does not prove it was applied.
+If `/panel/api/server/status` is inaccessible or returns no Xray state, the
+runtime check fails rather than assuming success.
+
+## `doctor` reports `routing AmneziaWG` failure
+
+A generated `amneziawg-v6-*` per-client egress rule precedes the abuse rules.
+Disable per-client IPv6 egress for the affected AmneziaWG inbound, or resolve
+the generated rule order upstream. Reordering only the saved routing template
+does not override rules that 3x-ui prepends. See [Xray setup](3x-ui-xray.md#native-amneziawg).
+
+Authenticated loopback SOCKS/mixed relays count as user inbounds for sniffing.
+If a pure AmneziaWG deployment reports `no user inbounds found`, verify the
+guard is updated and the panel generates a relay with enabled peers and
+non-empty client identities.
 
 ## `doctor` reports `x509: cannot validate certificate for 127.0.0.1`
 

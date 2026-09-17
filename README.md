@@ -13,13 +13,14 @@ Xray access log
 
 ## 适用版本与边界
 
-当前代码已按 3x-ui `v3.7.0` 及其内置 Xray-core `v26.7.28` 核对：
+当前代码已按 [3x-ui `v3.8.5`](https://github.com/MHSanaei/3x-ui/releases/tag/v3.8.5) 及其内置 Xray-core `v26.9.9` 的源码和接口核对，并通过本项目单元测试；实际部署仍需执行下方健康检查：
 
 - 支持 Bearer Token 和面板账号密码登录。
-- 3x-ui 3.7.0 的 Token 必须使用 `admin` scope；`monitor` 和 `node-sync` 权限不足。
+- 3x-ui 3.7.0 起的 Token 必须使用 `admin` scope；`monitor` 和 `node-sync` 权限不足。
 - 禁用客户端优先使用 `/panel/api/clients/bulkDisable`，旧版接口不可用时自动回退。
 - 支持 Xray access log 中的 `>>`、`->` 和 `==>` 路由分隔符。
 - Native AmneziaWG 经本机 SOCKS5 relay 进入 Xray：带 email 的事件仍可计分和禁用客户端，但不会封禁回环来源 IP。
+- `doctor` 会检查 Xray 运行状态和面板报告的配置错误，将带客户端认证的回环 relay 纳入 sniffing 检查，并识别 AmneziaWG 每客户端 IPv6 出口对后续防滥用规则的遮挡。
 
 本项目不会直接修改 `/etc/x-ui/x-ui.db`，也不会自动改写全局 Xray 配置。升级 3x-ui 或 Xray 后，应重新执行 `doctor` 并检查路由。更多兼容性说明见 [docs/3x-ui-xray.md](docs/3x-ui-xray.md)。
 
@@ -40,7 +41,7 @@ Xray access log
 
 ### 使用 API Token
 
-3x-ui 3.7.0 请创建 `admin` scope Token。Token 明文只在创建时显示一次；再次运行 `x-ui setting -getApiToken` 会轮换 `cli-fallback` Token，并立即使旧值失效。
+3x-ui 3.8.5 请创建 `admin` scope Token。Token 明文只在创建时显示一次；再次运行 `x-ui setting -getApiToken` 会轮换 `cli-fallback` Token，并立即使旧值失效。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
@@ -272,7 +273,21 @@ BT                         -> TORRENT
 其他流量                    -> direct（或现有默认出站）
 ```
 
-`doctor` 会检查 access log、面板 API、`TORRENT`/`blocked`、BT 路由顺序和用户入站 sniffing，但不会专门验证 `CN_BLOCKED` 和 UDP 规则；这两项需要通过 access/error log 实测。
+`doctor` 会检查 access log、面板 API、Xray 运行状态和配置错误、`TORRENT`/`blocked`、BT 路由顺序、AmneziaWG IPv6 出口遮挡，以及用户入站（含带认证客户端的回环 SOCKS/mixed relay）的 sniffing。状态接口不可用或缺少 Xray 状态时也会报错，不会假定运行正常。
+
+3x-ui 3.8.5 会在新配置存在端口冲突时保留运行中的旧配置。`getConfigJson` 返回生成配置，不是运行配置快照；若 `doctor` 的 `xray runtime` 报告 `config refused`，请先解决面板报告的冲突并重新应用配置。检查通过仅说明配置检查通过且面板未报告运行错误，不证明每条规则已经被真实流量命中；`CN_BLOCKED`、UDP 规则及具体客户端的路由结果仍需通过 access/error log 实测。
+
+### Native AmneziaWG 的每客户端 IPv6 出口
+
+启用每客户端 IPv6 出口、配置有效外部接口且客户端具有 IPv6 AllowedIPs 时，3x-ui 会把 `amneziawg-v6-*` 直连规则插到保存的路由规则之前。该规则按入站和 email 直接匹配，可能绕过后面的 `TORRENT`、`blocked` 以及 `CN_BLOCKED`。
+
+此时 `doctor` 的 `routing AmneziaWG` 会报错并列出相关入站、用户及出站。需要关闭面板中该 AmneziaWG 入站的每客户端 IPv6 出口功能，或在上游解决生成路由的优先级，使防滥用规则先匹配，再重新应用并验证。仅在面板路由编辑器中移动保存的规则不能保证覆盖自动前置规则。本项目只诊断此限制，不自动改写面板配置，也不提供完整的 Xray 路由模拟。
+
+### 禁用客户端与 Xray 重启
+
+3x-ui 3.8.5 的 **Restart Xray After Client Disable** 设置也作用于本项目调用的批量禁用接口。开启时，禁用客户端可能触发整个 Xray 重启，影响同一核心上的其他连接；关闭时，移除客户端凭据通常只阻止新连接，既有连接可能继续，来源 IP 封禁的效果还取决于是否能取得真实来源地址。
+
+是否开启应在 3x-ui 的 Xray 设置中明确选择。本项目遗留的 `panel.restart_xray` 字段目前未接入处置逻辑，不能覆盖面板的重启设置；将它设为 `false` 不代表面板不会重启 Xray。
 
 ## 默认策略
 

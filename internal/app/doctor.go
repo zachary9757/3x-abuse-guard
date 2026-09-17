@@ -38,6 +38,19 @@ func Doctor(ctx context.Context, cfg config.Config) []Check {
 		return checks
 	}
 	checks = append(checks, Check{"panel api", true, cfg.Panel.BaseURL})
+	status, err := client.GetServerStatus(ctx)
+	switch {
+	case err != nil:
+		checks = append(checks, Check{"xray runtime", false, err.Error()})
+	case status.Xray == nil || strings.TrimSpace(status.Xray.State) == "":
+		checks = append(checks, Check{"xray runtime", false, "panel status has no Xray state; cannot verify runtime health"})
+	case strings.TrimSpace(status.Xray.ErrorMsg) != "":
+		checks = append(checks, Check{"xray runtime", false, status.Xray.ErrorMsg})
+	case status.Xray.State != "running":
+		checks = append(checks, Check{"xray runtime", false, "Xray is " + status.Xray.State})
+	default:
+		checks = append(checks, Check{"xray runtime", true, "Xray is running; panel reports no config error"})
+	}
 
 	checks = append(checks, inspectXrayConfig(xrayConfig, cfg)...)
 	return checks
@@ -52,6 +65,8 @@ func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
 	torrentOK, torrentMessage := hasFirstProtocolRoutingOutbound(xrayConfig, cfg.Xray.TorrentTag, "bittorrent")
 	checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, torrentOK, torrentMessage})
 	checks = append(checks, Check{"routing " + cfg.Xray.BlockedTag, hasHighRiskRoutingOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires an ip or port block rule"})
+	relayOK, relayMessage := hasNoAmneziaWGRouteBypass(xrayConfig, cfg.Xray.TorrentTag, cfg.Xray.BlockedTag)
+	checks = append(checks, Check{"routing AmneziaWG", relayOK, relayMessage})
 	sniffingOK, sniffingMessage := hasSniffingOnUserInbounds(xrayConfig)
 	checks = append(checks, Check{"sniffing", sniffingOK, sniffingMessage})
 	return checks
@@ -141,13 +156,56 @@ func hasSniffingOnUserInbounds(cfg map[string]any) (bool, string) {
 	return enabledCount == total, fmt.Sprintf("%d/%d user inbounds have sniffing enabled", enabledCount, total)
 }
 
+// 3x-ui prepends these per-peer IPv6 egress rules to the saved routing rules.
+// Checking only protocol rules misses the earlier inboundTag+user match.
+func hasNoAmneziaWGRouteBypass(cfg map[string]any, torrentTag, blockedTag string) (bool, string) {
+	routing, _ := cfg["routing"].(map[string]any)
+	rules := list(routing["rules"])
+	for i, rule := range rules {
+		m, ok := rule.(map[string]any)
+		if !ok {
+			continue
+		}
+		tag := stringValue(m["outboundTag"])
+		if !strings.HasPrefix(tag, "amneziawg-v6-") || !hasValues(m["inboundTag"]) || !hasValues(m["user"]) {
+			continue
+		}
+		for _, later := range rules[i+1:] {
+			next, ok := later.(map[string]any)
+			if !ok {
+				continue
+			}
+			target := stringValue(next["outboundTag"])
+			if target == torrentTag || target == blockedTag {
+				return false, fmt.Sprintf("rule %d (%s, inbounds=%v, users=%v) can bypass later %s rules; disable per-client AmneziaWG IPv6 egress or fix the generated routing order in 3x-ui", i+1, tag, m["inboundTag"], m["user"], target)
+			}
+		}
+	}
+	return true, "no generated AmneziaWG IPv6 egress rule precedes abuse rules"
+}
+
 func isUserFacingInbound(inbound map[string]any) bool {
 	if strings.EqualFold(stringValue(inbound["tag"]), "api") {
 		return false
 	}
 	protocol := stringValue(inbound["protocol"])
 	listen := strings.Trim(stringValue(inbound["listen"]), "[]")
-	return !strings.EqualFold(protocol, "socks") || (listen != "127.0.0.1" && listen != "::1")
+	if (!strings.EqualFold(protocol, "socks") && !strings.EqualFold(protocol, "mixed")) || (listen != "127.0.0.1" && listen != "::1") {
+		return true
+	}
+	// Authenticated loopback relays carry real client identities (AmneziaWG).
+	// Anonymous internal proxies such as panel-egress remain excluded.
+	settings, _ := inbound["settings"].(map[string]any)
+	if !strings.EqualFold(stringValue(settings["auth"]), "password") {
+		return false
+	}
+	for _, account := range list(settings["accounts"]) {
+		m, ok := account.(map[string]any)
+		if ok && stringValue(m["user"]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(value any, expected string) bool {

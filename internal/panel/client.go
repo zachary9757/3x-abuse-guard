@@ -52,6 +52,16 @@ type ClientDetail struct {
 	InboundIDs []int          `json:"inboundIds"`
 }
 
+type ServerStatus struct {
+	Xray *XrayStatus `json:"xray"`
+}
+
+type XrayStatus struct {
+	State    string `json:"state"`
+	ErrorMsg string `json:"errorMsg"`
+	Version  string `json:"version"`
+}
+
 type bulkSetEnableResult struct {
 	Changed int                   `json:"changed"`
 	Skipped []bulkSetEnableReport `json:"skipped"`
@@ -151,6 +161,12 @@ func (c *Client) GetConfigJSON(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (c *Client) GetServerStatus(ctx context.Context) (ServerStatus, error) {
+	var out ServerStatus
+	err := c.do(ctx, http.MethodGet, "/panel/api/server/status", nil, &out)
+	return out, err
 }
 
 func (c *Client) GetClient(ctx context.Context, email string) (ClientDetail, error) {
