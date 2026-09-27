@@ -17,12 +17,18 @@ func (f *IPTables) Setup(ctx context.Context) error {
 	if err := f.setupBin(ctx, "iptables"); err != nil {
 		return err
 	}
-	_ = f.setupBin(ctx, "ip6tables")
+	if err := f.setupBin(ctx, "ip6tables"); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (f *IPTables) setupBin(ctx context.Context, bin string) error {
-	_ = f.Runner.Run(ctx, bin, "-t", "raw", "-N", f.Chain)
+	if err := f.Runner.Run(ctx, bin, "-t", "raw", "-L", f.Chain); err != nil {
+		if err := f.Runner.Run(ctx, bin, "-t", "raw", "-N", f.Chain); err != nil {
+			return fmt.Errorf("%s create chain failed: %w", bin, err)
+		}
+	}
 	if err := f.Runner.Run(ctx, bin, "-t", "raw", "-C", "PREROUTING", "-j", f.Chain); err != nil {
 		if err := f.Runner.Run(ctx, bin, "-t", "raw", "-A", "PREROUTING", "-j", f.Chain); err != nil {
 			return fmt.Errorf("%s setup failed: %w", bin, err)
@@ -60,8 +66,11 @@ func (f *IPTables) Unblock(ctx context.Context, ip string) error {
 		f.Runner = ExecRunner{}
 	}
 	for {
-		if err := f.Runner.Run(ctx, bin, "-t", "raw", "-D", f.Chain, "-s", ip, "-j", "DROP"); err != nil {
+		if err := f.Runner.Run(ctx, bin, "-t", "raw", "-C", f.Chain, "-s", ip, "-j", "DROP"); err != nil {
 			return nil
+		}
+		if err := f.Runner.Run(ctx, bin, "-t", "raw", "-D", f.Chain, "-s", ip, "-j", "DROP"); err != nil {
+			return fmt.Errorf("%s unblock failed: %w", bin, err)
 		}
 	}
 }

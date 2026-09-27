@@ -48,6 +48,40 @@ type flakyNotifier struct {
 	calls int
 }
 
+type failingBanStore struct{}
+
+func (failingBanStore) RecordEvent(rec state.EventRecord) (state.EventRecord, error) {
+	return rec, nil
+}
+
+func (failingBanStore) SumScores(string, string, string, time.Time) (int, error) {
+	return 100, nil
+}
+
+func (failingBanStore) SumScoresForKind(string, string, string, string, time.Time) (int, error) {
+	return 0, nil
+}
+
+func (failingBanStore) UpsertBan(state.BanRecord) error {
+	return errors.New("state write failed")
+}
+
+type rollbackRecordingFirewall struct {
+	blocked   int
+	unblocked int
+}
+
+func (f *rollbackRecordingFirewall) Setup(context.Context) error { return nil }
+func (f *rollbackRecordingFirewall) Block(context.Context, string) error {
+	f.blocked++
+	return nil
+}
+func (f *rollbackRecordingFirewall) Unblock(context.Context, string) error {
+	f.unblocked++
+	return nil
+}
+func (f *rollbackRecordingFirewall) DropConnections(context.Context, string) error { return nil }
+
 func (n *flakyNotifier) Notify(_ context.Context, _ notify.Event) error {
 	n.calls++
 	if n.calls == 1 {
@@ -90,6 +124,90 @@ func TestTorrentBlocksAndDisablesAfterThreshold(t *testing.T) {
 	}
 	if len(panel.disabled) != 1 || panel.disabled[0] != "alice" {
 		t.Fatalf("disabled = %v", panel.disabled)
+	}
+}
+
+func TestBanStateFailureKeepsFirewallFailClosed(t *testing.T) {
+	fw := &rollbackRecordingFirewall{}
+	engine := NewEngine(Config{
+		Window:                 time.Hour,
+		BlockDuration:          time.Hour,
+		TorrentBlockOnFirstHit: true,
+	}, failingBanStore{}, fw, nil, notify.Noop{}, nil)
+	err := engine.Handle(context.Background(), logwatch.Event{
+		Time: time.Now(), Kind: logwatch.KindTorrent, SourceIP: "198.51.100.10", Outbound: "TORRENT",
+	})
+	if err == nil {
+		t.Fatal("expected state write failure")
+	}
+	if fw.blocked != 1 || fw.unblocked != 0 {
+		t.Fatalf("firewall calls block=%d unblock=%d", fw.blocked, fw.unblocked)
+	}
+}
+
+func TestLegacyProfileIncludesPreviousProfileWindow(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if _, err := store.RecordEvent(state.EventRecord{
+		Kind: "torrent", Score: 100, Profile: "default", Email: "alice", CreatedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	panel := &fakePanel{}
+	engine := NewEngine(Config{
+		Window: time.Hour,
+		Profiles: map[string]Profile{
+			"default":        {Name: "default", DisableClientScore: 200},
+			"legacy_torrent": {Name: "legacy_torrent", DisableClientScore: 200},
+		},
+		Assignments:         Assignments{Traffic: map[string]string{"torrent": "legacy_torrent"}},
+		ScoreProfileAliases: map[string]string{"legacy_torrent": "default"},
+	}, store, &firewall.Noop{}, panel, notify.Noop{}, nil)
+
+	err = engine.Handle(context.Background(), logwatch.Event{
+		Time: now, Kind: logwatch.KindTorrent, SourceIP: "198.51.100.10", Email: "alice", Outbound: "TORRENT",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(panel.disabled) != 1 || panel.disabled[0] != "alice" {
+		t.Fatalf("disabled = %v", panel.disabled)
+	}
+}
+
+func TestLegacyProfileAliasExcludesOtherFindingKinds(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if _, err := store.RecordEvent(state.EventRecord{
+		Kind: "port_scan", Score: 160, Profile: "default", Email: "alice", CreatedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	panel := &fakePanel{}
+	engine := NewEngine(Config{
+		Window: time.Hour,
+		Profiles: map[string]Profile{
+			"default":        {Name: "default", DisableClientScore: 200},
+			"legacy_torrent": {Name: "legacy_torrent", DisableClientScore: 200},
+		},
+		Assignments:         Assignments{Traffic: map[string]string{"torrent": "legacy_torrent"}},
+		ScoreProfileAliases: map[string]string{"legacy_torrent": "default"},
+	}, store, &firewall.Noop{}, panel, notify.Noop{}, nil)
+
+	err = engine.Handle(context.Background(), logwatch.Event{
+		Time: now, Kind: logwatch.KindTorrent, SourceIP: "198.51.100.10", Email: "alice", Outbound: "TORRENT",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(panel.disabled) != 0 {
+		t.Fatalf("unrelated finding kind contributed to legacy threshold: %v", panel.disabled)
 	}
 }
 

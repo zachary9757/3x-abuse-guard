@@ -100,6 +100,39 @@ func TestTailerReadsReplacementFileLargerThanOldOffset(t *testing.T) {
 	}
 }
 
+func TestTailerFailsWhenInitialPathIsMissing(t *testing.T) {
+	tailer := Tailer{Path: filepath.Join(t.TempDir(), "missing.log")}
+	err := tailer.Follow(context.Background(), make(chan string, 1))
+	if err == nil {
+		t.Fatal("expected missing path error")
+	}
+}
+
+func TestTailerFailsAfterRepeatedReadErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "access.log")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tailer := Tailer{Path: path, PollEvery: time.Millisecond, MaxConsecutiveErrors: 2}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tailer.Follow(context.Background(), make(chan string, 1))
+	}()
+	time.Sleep(5 * time.Millisecond)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected repeated read error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("tailer did not report repeated read errors")
+	}
+}
+
 func appendFile(path string, text string) error {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {

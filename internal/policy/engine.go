@@ -22,6 +22,7 @@ type Panel interface {
 type Store interface {
 	RecordEvent(rec state.EventRecord) (state.EventRecord, error)
 	SumScores(email string, sourceIP string, profile string, since time.Time) (int, error)
+	SumScoresForKind(email string, sourceIP string, profile string, kind string, since time.Time) (int, error)
 	UpsertBan(rec state.BanRecord) error
 }
 
@@ -37,6 +38,7 @@ type Config struct {
 	Detectors              detector.Config
 	Profiles               map[string]Profile
 	Assignments            Assignments
+	ScoreProfileAliases    map[string]string
 }
 
 type Profile struct {
@@ -121,6 +123,26 @@ func (e *Engine) Handle(ctx context.Context, ev logwatch.Event) error {
 	return nil
 }
 
+func (e *Engine) Cleanup(now time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	e.pipeline.Cleanup(now)
+	cutoff := now.Add(-e.cfg.Window)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pruneActionTimes(e.disabled, cutoff)
+	pruneActionTimes(e.notified, cutoff)
+}
+
+func pruneActionTimes(values map[string]time.Time, cutoff time.Time) {
+	for key, value := range values {
+		if value.Before(cutoff) {
+			delete(values, key)
+		}
+	}
+}
+
 func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding detector.Finding, bypassIPBlock bool) error {
 	profile := e.profileFor(ev, finding.Kind)
 	if _, err := e.store.RecordEvent(state.EventRecord{
@@ -141,6 +163,13 @@ func (e *Engine) applyFinding(ctx context.Context, ev logwatch.Event, finding de
 	total, err := e.store.SumScores(ev.Email, ev.SourceIP, profile.Name, finding.CreatedAt.Add(-e.cfg.Window))
 	if err != nil {
 		return err
+	}
+	if previousProfile := e.cfg.ScoreProfileAliases[profile.Name]; previousProfile != "" && previousProfile != profile.Name {
+		previousTotal, err := e.store.SumScoresForKind(ev.Email, ev.SourceIP, previousProfile, finding.Kind, finding.CreatedAt.Add(-e.cfg.Window))
+		if err != nil {
+			return err
+		}
+		total += previousTotal
 	}
 
 	if profile.NotifyScore > 0 && total >= profile.NotifyScore {
@@ -177,6 +206,8 @@ func (e *Engine) blockIP(ctx context.Context, ev logwatch.Event, finding detecto
 		CreatedAt: time.Now(),
 		ExpiresAt: expiresAt,
 	}); err != nil {
+		// Keep the firewall fail-closed. The rule may have existed before this
+		// finding, so blindly deleting it could remove an active protection.
 		return err
 	}
 	if err := e.notifier.Notify(ctx, notificationEvent("ip_blocked", ev, finding, profile, score, threshold, finding.Reason, time.Now())); err != nil {

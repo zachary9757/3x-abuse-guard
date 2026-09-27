@@ -21,9 +21,21 @@ WEBHOOK_URL="${WEBHOOK_URL:-}"
 TELEGRAM_BOT_TOKEN="${THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN:-}"
 TELEGRAM_CHAT_ID="${THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID:-}"
 ASSET_URL="${ASSET_URL:-}"
+ASSET_SHA256="${ASSET_SHA256:-}"
 GO_VERSION="${GO_VERSION:-1.22.12}"
 START_SERVICE=1
 FORCE_BUILD=0
+REPLACE_CONFIG=0
+BINARY_BACKUP=""
+CONFIG_BACKUP=""
+ENV_BACKUP=""
+SERVICE_BACKUP=""
+BINARY_CREATED=0
+CONFIG_CREATED=0
+ENV_CREATED=0
+SERVICE_CREATED=0
+SERVICE_WAS_ACTIVE=0
+SERVICE_WAS_ENABLED=0
 
 usage() {
   cat <<'EOF'
@@ -53,7 +65,9 @@ usage() {
   --version VERSION          安装版本，默认 latest
   --install-dir PATH         二进制安装目录，默认 /usr/local/bin
   --asset-url URL            指定 release 二进制压缩包 URL
+  --asset-sha256 SHA256      自定义 release 包的 SHA256；使用 --asset-url 时必需
   --force-build              强制从源码构建
+  --replace-config           备份后使用命令行参数替换现有配置和凭据
   --no-start                 只安装和写配置，不启动 systemd 服务
   -h, --help                 显示帮助
 
@@ -160,8 +174,16 @@ parse_args() {
         ASSET_URL="${2:-}"
         shift 2
         ;;
+      --asset-sha256)
+        ASSET_SHA256="${2:-}"
+        shift 2
+        ;;
       --force-build)
         FORCE_BUILD=1
+        shift
+        ;;
+      --replace-config)
+        REPLACE_CONFIG=1
         shift
         ;;
       --no-start)
@@ -198,6 +220,12 @@ validate_args() {
   esac
   [ -n "$PANEL_URL" ] || die "--panel-url 不能为空"
   [ -n "$INSTALL_DIR" ] || die "--install-dir 不能为空"
+  if [ -n "$ASSET_URL" ] && [ -z "$ASSET_SHA256" ]; then
+    die "使用 --asset-url 时必须同时提供 --asset-sha256"
+  fi
+  if [ -n "$ASSET_SHA256" ] && ! [[ "$ASSET_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    die "--asset-sha256 必须是 64 位十六进制 SHA256"
+  fi
 }
 
 detect_arch() {
@@ -281,7 +309,7 @@ ensure_go() {
 }
 
 download_release_binary() {
-  local arch tmp url archive bin
+  local arch tmp url archive bin checksum_url checksum_file expected
   arch="$(detect_arch)"
   tmp="$(mktemp -d)"
 
@@ -300,6 +328,26 @@ download_release_binary() {
     return 1
   fi
 
+  expected="$ASSET_SHA256"
+  if [ -z "$expected" ]; then
+    if [ "$VERSION" = "latest" ]; then
+      checksum_url="https://github.com/${REPO}/releases/latest/download/checksums.txt"
+    else
+      checksum_url="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+    fi
+    checksum_file="$tmp/checksums.txt"
+    if ! curl -fL "$checksum_url" -o "$checksum_file"; then
+      warn "release 缺少 checksums.txt，将回退到源码构建"
+      return 1
+    fi
+    expected="$(awk -v name="3x-abuse-guard-linux-${arch}.tar.gz" '$2 == name || $2 == "*" name {print $1; exit}' "$checksum_file")"
+    if [ -z "$expected" ]; then
+      warn "checksums.txt 中没有当前架构，将回退到源码构建"
+      return 1
+    fi
+  fi
+  verify_sha256 "$archive" "$expected"
+
   tar -xzf "$archive" -C "$tmp"
   bin="$(find "$tmp" -type f -name 3x-abuse-guard -perm -111 | head -n 1)"
   if [ -z "$bin" ]; then
@@ -310,6 +358,24 @@ download_release_binary() {
   install -m 0755 "$bin" "$INSTALL_DIR/3x-abuse-guard"
   log "已安装二进制：$INSTALL_DIR/3x-abuse-guard"
   return 0
+}
+
+verify_sha256() {
+  local file="$1"
+  local expected
+  local actual
+  expected="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+  if has_cmd sha256sum; then
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+  elif has_cmd shasum; then
+    actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+  else
+    die "缺少 sha256sum 或 shasum，无法验证 release 包"
+  fi
+  actual="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
+  if [ "$actual" != "$expected" ]; then
+    die "release 包 SHA256 校验失败"
+  fi
 }
 
 build_from_source() {
@@ -336,6 +402,12 @@ build_from_source() {
 
 install_binary() {
   mkdir -p "$INSTALL_DIR"
+  if [ -f "$INSTALL_DIR/3x-abuse-guard" ]; then
+    BINARY_BACKUP="$(mktemp)"
+    cp -p "$INSTALL_DIR/3x-abuse-guard" "$BINARY_BACKUP"
+  else
+    BINARY_CREATED=1
+  fi
   if [ "$FORCE_BUILD" -eq 0 ] && download_release_binary; then
     return
   fi
@@ -354,6 +426,48 @@ has_panel_auth() {
       [ -n "$TOKEN" ] || { [ -n "$USERNAME" ] && [ -n "$PASSWORD" ]; }
       ;;
   esac
+}
+
+env_file_has_value() {
+  local name="$1"
+  local file="$2"
+  local line value
+  [ -f "$file" ] || return 1
+  line="$(grep -E "^${name}=" "$file" | tail -n 1 || true)"
+  [ -n "$line" ] || return 1
+  value="${line#*=}"
+  value="${value//[[:space:]]/}"
+  [ -n "$value" ] && [ "$value" != "''" ] && [ "$value" != '""' ]
+}
+
+has_stored_panel_auth() {
+  local file="$CONFIG_DIR/env"
+  local config="$CONFIG_DIR/config.yaml"
+  local token_name username_name password_name
+  token_name="$(yaml_scalar token_env "$config")"
+  username_name="$(yaml_scalar username_env "$config")"
+  password_name="$(yaml_scalar password_env "$config")"
+  token_name="${token_name:-THREEX_ABUSE_GUARD_TOKEN}"
+  username_name="${username_name:-THREEX_ABUSE_GUARD_USERNAME}"
+  password_name="${password_name:-THREEX_ABUSE_GUARD_PASSWORD}"
+  env_file_has_value "$token_name" "$file" || {
+    env_file_has_value "$username_name" "$file" &&
+      env_file_has_value "$password_name" "$file"
+  }
+}
+
+yaml_scalar() {
+  local key="$1"
+  local file="$2"
+  [ -f "$file" ] || return 1
+  awk -v wanted="$key" '
+    $1 == wanted ":" {
+      value = $2
+      gsub(/^['\''"]|['\''"]$/, "", value)
+      print value
+      exit
+    }
+  ' "$file"
 }
 
 prompt_auth_if_needed() {
@@ -387,14 +501,27 @@ quote_env_value() {
 write_env_line() {
   local name="$1"
   local value="$2"
-  printf "%s=" "$name" >>"$CONFIG_DIR/env"
-  quote_env_value "$value" >>"$CONFIG_DIR/env"
-  printf "\n" >>"$CONFIG_DIR/env"
+  local target="${CONFIG_DIR_ENV_TARGET:-$CONFIG_DIR/env}"
+  printf "%s=" "$name" >>"$target"
+  quote_env_value "$value" >>"$target"
+  printf "\n" >>"$target"
 }
 
 write_config() {
+  local config_tmp env_tmp
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
-  cat >"$CONFIG_DIR/config.yaml" <<EOF
+  if [ "$REPLACE_CONFIG" -eq 0 ] && [ -f "$CONFIG_DIR/config.yaml" ]; then
+    log "保留现有配置：$CONFIG_DIR/config.yaml"
+  else
+    if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
+      CONFIG_CREATED=1
+    fi
+    if [ -f "$CONFIG_DIR/config.yaml" ]; then
+      CONFIG_BACKUP="$(mktemp)"
+      cp -p "$CONFIG_DIR/config.yaml" "$CONFIG_BACKUP"
+    fi
+    config_tmp="$(mktemp "$CONFIG_DIR/.config.yaml.XXXXXX")"
+    cat >"$config_tmp" <<EOF
 panel:
   base_url: "$PANEL_URL"
   auth_mode: "$AUTH_MODE"
@@ -404,7 +531,6 @@ panel:
   two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
   insecure_skip_verify: $PANEL_INSECURE_SKIP_VERIFY
-  restart_xray: false
 
 xray:
   access_log: "$XRAY_ACCESS_LOG"
@@ -444,9 +570,6 @@ policy:
   mode: "$POLICY_MODE"
   window_minutes: 60
   torrent_ip_block_on_first_hit: true
-  torrent_disable_client_after: 2
-  blocked_disable_client_after: 0
-  blocked_notify_after: 5
   profiles:
     default:
       notify_score: 50
@@ -483,22 +606,38 @@ notify:
 
 state:
   path: "$STATE_DIR/state.db"
-
-logging:
-  dir: "$LOG_DIR"
+  event_retention_days: 30
 EOF
+    chmod 600 "$config_tmp"
+    mv -f "$config_tmp" "$CONFIG_DIR/config.yaml"
+    log "已写入配置：$CONFIG_DIR/config.yaml"
+  fi
 
-  : >"$CONFIG_DIR/env"
-  write_env_line "THREEX_ABUSE_GUARD_TOKEN" "$TOKEN"
-  write_env_line "THREEX_ABUSE_GUARD_USERNAME" "$USERNAME"
-  write_env_line "THREEX_ABUSE_GUARD_PASSWORD" "$PASSWORD"
-  write_env_line "THREEX_ABUSE_GUARD_2FA_CODE" "$TWO_FACTOR_CODE"
-  write_env_line "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"
-  write_env_line "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID" "$TELEGRAM_CHAT_ID"
-
-  chmod 600 "$CONFIG_DIR/config.yaml" "$CONFIG_DIR/env"
-  log "已写入配置：$CONFIG_DIR/config.yaml"
-  log "已写入环境文件：$CONFIG_DIR/env"
+  if [ "$REPLACE_CONFIG" -eq 0 ] && [ -f "$CONFIG_DIR/env" ]; then
+    log "保留现有环境文件：$CONFIG_DIR/env"
+  else
+    if [ ! -f "$CONFIG_DIR/env" ]; then
+      ENV_CREATED=1
+    fi
+    if [ -f "$CONFIG_DIR/env" ]; then
+      ENV_BACKUP="$(mktemp)"
+      cp -p "$CONFIG_DIR/env" "$ENV_BACKUP"
+    fi
+    env_tmp="$(mktemp "$CONFIG_DIR/.env.XXXXXX")"
+    : >"$env_tmp"
+    local original_env="$CONFIG_DIR/env"
+    CONFIG_DIR_ENV_TARGET="$env_tmp"
+    write_env_line "THREEX_ABUSE_GUARD_TOKEN" "$TOKEN"
+    write_env_line "THREEX_ABUSE_GUARD_USERNAME" "$USERNAME"
+    write_env_line "THREEX_ABUSE_GUARD_PASSWORD" "$PASSWORD"
+    write_env_line "THREEX_ABUSE_GUARD_2FA_CODE" "$TWO_FACTOR_CODE"
+    write_env_line "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"
+    write_env_line "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID" "$TELEGRAM_CHAT_ID"
+    unset CONFIG_DIR_ENV_TARGET
+    chmod 600 "$env_tmp"
+    mv -f "$env_tmp" "$original_env"
+    log "已写入环境文件：$CONFIG_DIR/env"
+  fi
 }
 
 install_cli_wrapper() {
@@ -523,8 +662,15 @@ EOF
 }
 
 install_service_files() {
-  "$INSTALL_DIR/3x-abuse-guard" install --binary "$INSTALL_DIR/3x-abuse-guard"
   write_config
+  if [ -f /etc/systemd/system/3x-abuse-guard.service ]; then
+    SERVICE_BACKUP="$(mktemp)"
+    cp -p /etc/systemd/system/3x-abuse-guard.service "$SERVICE_BACKUP"
+  else
+    SERVICE_CREATED=1
+  fi
+  "$INSTALL_DIR/3x-abuse-guard" install --binary "$INSTALL_DIR/3x-abuse-guard"
+  "$INSTALL_DIR/3x-abuse-guard" status --config "$CONFIG_DIR/config.yaml" >/dev/null
   install_cli_wrapper
   systemctl daemon-reload
 }
@@ -534,12 +680,77 @@ start_service() {
     warn "已按 --no-start 跳过启动服务"
     return
   fi
-  if ! has_panel_auth; then
+  if systemctl is-active --quiet 3x-abuse-guard; then
+    systemctl enable 3x-abuse-guard
+    systemctl restart 3x-abuse-guard
+    systemctl is-active --quiet 3x-abuse-guard
+    systemctl status 3x-abuse-guard --no-pager
+    return
+  fi
+  if ! has_panel_auth && ! has_stored_panel_auth; then
     warn "未配置 API Token 或面板账号密码，暂不启动服务。请编辑 $CONFIG_DIR/env 后执行：systemctl enable --now 3x-abuse-guard"
     return
   fi
-  systemctl enable --now 3x-abuse-guard
-  systemctl status 3x-abuse-guard --no-pager || true
+  systemctl enable 3x-abuse-guard
+  systemctl start 3x-abuse-guard
+  systemctl is-active --quiet 3x-abuse-guard
+  systemctl status 3x-abuse-guard --no-pager
+}
+
+restore_file() {
+  local backup="$1"
+  local destination="$2"
+  if [ -n "$backup" ] && [ -f "$backup" ]; then
+    cp -p "$backup" "$destination"
+  fi
+}
+
+rollback_install() {
+  local exit_code=$?
+  trap - ERR
+  err "安装失败，正在恢复安装前文件"
+  restore_file "$BINARY_BACKUP" "$INSTALL_DIR/3x-abuse-guard"
+  restore_file "$CONFIG_BACKUP" "$CONFIG_DIR/config.yaml"
+  restore_file "$ENV_BACKUP" "$CONFIG_DIR/env"
+  restore_file "$SERVICE_BACKUP" /etc/systemd/system/3x-abuse-guard.service
+  [ "$BINARY_CREATED" -eq 0 ] || rm -f "$INSTALL_DIR/3x-abuse-guard"
+  [ "$CONFIG_CREATED" -eq 0 ] || rm -f "$CONFIG_DIR/config.yaml"
+  [ "$ENV_CREATED" -eq 0 ] || rm -f "$CONFIG_DIR/env"
+  [ "$SERVICE_CREATED" -eq 0 ] || rm -f /etc/systemd/system/3x-abuse-guard.service
+  if has_cmd systemctl; then
+    systemctl daemon-reload || true
+    if [ "$SERVICE_WAS_ENABLED" -eq 1 ]; then
+      systemctl enable 3x-abuse-guard || true
+    else
+      systemctl disable 3x-abuse-guard || true
+    fi
+    if [ "$SERVICE_WAS_ACTIVE" -eq 1 ]; then
+      systemctl restart 3x-abuse-guard || true
+    else
+      systemctl stop 3x-abuse-guard || true
+    fi
+  fi
+  exit "$exit_code"
+}
+
+finish_install() {
+  [ -z "$BINARY_BACKUP" ] || rm -f "$BINARY_BACKUP"
+  [ -z "$CONFIG_BACKUP" ] || rm -f "$CONFIG_BACKUP"
+  [ -z "$ENV_BACKUP" ] || rm -f "$ENV_BACKUP"
+  [ -z "$SERVICE_BACKUP" ] || rm -f "$SERVICE_BACKUP"
+  trap - ERR
+}
+
+record_service_state() {
+  if ! has_cmd systemctl; then
+    return
+  fi
+  if systemctl is-active --quiet 3x-abuse-guard; then
+    SERVICE_WAS_ACTIVE=1
+  fi
+  if systemctl is-enabled --quiet 3x-abuse-guard; then
+    SERVICE_WAS_ENABLED=1
+  fi
 }
 
 print_next_steps() {
@@ -568,10 +779,15 @@ main() {
   need_root
   ensure_base_deps
   prompt_auth_if_needed
+  record_service_state
+  trap rollback_install ERR
   install_binary
   install_service_files
   start_service
+  finish_install
   print_next_steps
 }
 
-main "$@"
+if [ "${THREEX_ABUSE_GUARD_INSTALL_SOURCE_ONLY:-0}" != "1" ]; then
+  main "$@"
+fi

@@ -53,6 +53,13 @@ func TestStoreEventsAndBans(t *testing.T) {
 	if score != 0 {
 		t.Fatalf("default score = %d", score)
 	}
+	score, err = store.SumScoresForKind("alice", "", "heuristic", "torrent", now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if score != 0 {
+		t.Fatalf("torrent heuristic score = %d", score)
+	}
 
 	if err := store.UpsertBan(BanRecord{
 		IP:        "198.51.100.10",
@@ -101,5 +108,33 @@ func TestStoreDoesNotHoldDatabaseLockBetweenOperations(t *testing.T) {
 	}
 	if len(events) != 1 {
 		t.Fatalf("len(events) = %d", len(events))
+	}
+}
+
+func TestDeleteEventsBefore(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, createdAt := range []time.Time{now.Add(-48 * time.Hour), now.Add(-time.Hour)} {
+		if _, err := store.RecordEvent(EventRecord{Kind: "torrent", Email: "alice", CreatedAt: createdAt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deleted, err := store.DeleteEventsBefore(now.Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d", deleted)
+	}
+	events, err := store.RecentEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].CreatedAt.Before(now.Add(-24*time.Hour)) {
+		t.Fatalf("events = %#v", events)
 	}
 }

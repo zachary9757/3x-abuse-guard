@@ -19,9 +19,15 @@ func TestExampleYAMLIncludesTelegramNotifyEnv(t *testing.T) {
 		`blocked: blocked_watch`,
 		`port_scan: heuristic`,
 		`connection_rate: heuristic`,
+		`event_retention_days: 30`,
 	} {
 		if !strings.Contains(yaml, want) {
 			t.Fatalf("example yaml missing %q:\n%s", want, yaml)
+		}
+	}
+	for _, legacy := range []string{"torrent_disable_client_after", "blocked_disable_client_after", "blocked_notify_after", "restart_xray", "logging:"} {
+		if strings.Contains(yaml, legacy) {
+			t.Fatalf("example yaml still contains deprecated field %q:\n%s", legacy, yaml)
 		}
 	}
 }

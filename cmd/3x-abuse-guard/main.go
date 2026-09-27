@@ -115,8 +115,6 @@ func runStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg.Policy.TorrentDisableClientAfter = 0
-	cfg.Policy.BlockedDisableClientAfter = 0
 	cfg.Policy.Mode = "observe"
 	guard, err := app.New(cfg, log.New(os.Stdout, "", log.LstdFlags))
 	if err != nil {
@@ -158,8 +156,6 @@ func runUnblock(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg.Policy.TorrentDisableClientAfter = 0
-	cfg.Policy.BlockedDisableClientAfter = 0
 	cfg.Policy.Mode = "observe"
 	guard, err := app.New(cfg, log.New(os.Stdout, "", log.LstdFlags))
 	if err != nil {

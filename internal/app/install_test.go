@@ -54,4 +54,13 @@ func TestInstallWritesFiles(t *testing.T) {
 			t.Fatalf("env missing %q:\n%s", want, envData)
 		}
 	}
+	serviceData, err := os.ReadFile(filepath.Join(root, "etc/systemd/system/3x-abuse-guard.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"NoNewPrivileges=true", "PrivateTmp=true", "ProtectHome=true", "UMask=0077"} {
+		if !strings.Contains(string(serviceData), want) {
+			t.Fatalf("service missing %q:\n%s", want, serviceData)
+		}
+	}
 }

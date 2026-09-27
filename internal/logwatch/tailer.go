@@ -4,15 +4,17 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"time"
 )
 
 type Tailer struct {
-	Path       string
-	PollEvery  time.Duration
-	StartAtEnd bool
+	Path                 string
+	PollEvery            time.Duration
+	StartAtEnd           bool
+	MaxConsecutiveErrors int
 }
 
 func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
@@ -24,14 +26,20 @@ func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
 		poll = time.Second
 	}
 
-	var offset int64
-	var previous os.FileInfo
-	if t.StartAtEnd {
-		if st, err := os.Stat(t.Path); err == nil {
-			offset = st.Size()
-			previous = st
-		}
+	initial, err := os.Stat(t.Path)
+	if err != nil {
+		return fmt.Errorf("stat tail path: %w", err)
 	}
+	var offset int64
+	previous := initial
+	if t.StartAtEnd {
+		offset = initial.Size()
+	}
+	maxErrors := t.MaxConsecutiveErrors
+	if maxErrors <= 0 {
+		maxErrors = 5
+	}
+	consecutiveErrors := 0
 
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
@@ -44,6 +52,12 @@ func (t Tailer) Follow(ctx context.Context, lines chan<- string) error {
 		if err == nil {
 			offset = next
 			previous = current
+			consecutiveErrors = 0
+		} else {
+			consecutiveErrors++
+			if consecutiveErrors >= maxErrors {
+				return fmt.Errorf("tail %s failed %d consecutive times: %w", t.Path, consecutiveErrors, err)
+			}
 		}
 
 		select {

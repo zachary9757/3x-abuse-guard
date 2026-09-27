@@ -15,13 +15,14 @@ import (
 )
 
 type App struct {
-	Config   config.Config
-	Logger   *log.Logger
-	store    *state.Store
-	fw       firewall.Firewall
-	engine   *policy.Engine
-	notifier notify.Notifier
-	activity *activityStats
+	Config         config.Config
+	Logger         *log.Logger
+	store          *state.Store
+	fw             firewall.Firewall
+	engine         *policy.Engine
+	notifier       notify.Notifier
+	activity       *activityStats
+	lastEventPrune time.Time
 }
 
 func New(cfg config.Config, logger *log.Logger) (*App, error) {
@@ -61,14 +62,12 @@ func buildPolicyConfig(cfg config.Config) policy.Config {
 		Window:                 cfg.PolicyWindow(),
 		BlockDuration:          cfg.BlockDuration(),
 		TorrentBlockOnFirstHit: cfg.Policy.TorrentIPBlockOnFirstHit,
-		TorrentDisableAfter:    cfg.Policy.TorrentDisableClientAfter,
-		BlockedDisableAfter:    cfg.Policy.BlockedDisableClientAfter,
-		BlockedNotifyAfter:     cfg.Policy.BlockedNotifyAfter,
 		BypassIPs:              cfg.Firewall.BypassIPs,
 		Detectors:              cfg.Detectors,
 		Profiles:               policyProfiles(cfg),
 		Assignments:            policyAssignments(cfg),
 	}
+	applyLegacyPolicyThresholds(&policyCfg, cfg)
 	switch cfg.Policy.Mode {
 	case "observe":
 		policyCfg.ObserveOnly = true
@@ -98,6 +97,57 @@ func buildPolicyConfig(cfg config.Config) policy.Config {
 		policyCfg.Assignments.Traffic["torrent"] = "strict"
 	}
 	return policyCfg
+}
+
+// applyLegacyPolicyThresholds preserves old configurations that used hit counts.
+// New configurations should use profiles as the single policy source of truth.
+func applyLegacyPolicyThresholds(policyCfg *policy.Config, cfg config.Config) {
+	if policyCfg == nil {
+		return
+	}
+	if value := cfg.Policy.TorrentDisableClientAfter; value != nil {
+		policyCfg.TorrentDisableAfter = *value
+		profileName := isolateLegacyProfile(policyCfg, "torrent", "default", "legacy_torrent")
+		profile := policyCfg.Profiles[profileName]
+		profile.DisableClientScore = cfg.Detectors.Torrent.Score * *value
+		policyCfg.Profiles[profileName] = profile
+	}
+	if value := cfg.Policy.BlockedDisableClientAfter; value != nil {
+		policyCfg.BlockedDisableAfter = *value
+		profileName := isolateLegacyProfile(policyCfg, "blocked", "blocked_watch", "legacy_blocked")
+		profile := policyCfg.Profiles[profileName]
+		profile.DisableClientScore = cfg.Detectors.Blocked.Score * *value
+		policyCfg.Profiles[profileName] = profile
+	}
+	if value := cfg.Policy.BlockedNotifyAfter; value != nil {
+		policyCfg.BlockedNotifyAfter = *value
+		profileName := isolateLegacyProfile(policyCfg, "blocked", "blocked_watch", "legacy_blocked")
+		profile := policyCfg.Profiles[profileName]
+		profile.NotifyScore = cfg.Detectors.Blocked.Score * *value
+		policyCfg.Profiles[profileName] = profile
+	}
+}
+
+func isolateLegacyProfile(policyCfg *policy.Config, traffic, fallback, legacyName string) string {
+	if policyCfg.Assignments.Traffic == nil {
+		policyCfg.Assignments.Traffic = make(map[string]string)
+	}
+	if policyCfg.Assignments.Traffic[traffic] == legacyName {
+		return legacyName
+	}
+	sourceName := policyCfg.Assignments.Traffic[traffic]
+	if sourceName == "" {
+		sourceName = fallback
+	}
+	profile := policyCfg.Profiles[sourceName]
+	profile.Name = legacyName
+	policyCfg.Profiles[legacyName] = profile
+	policyCfg.Assignments.Traffic[traffic] = legacyName
+	if policyCfg.ScoreProfileAliases == nil {
+		policyCfg.ScoreProfileAliases = make(map[string]string)
+	}
+	policyCfg.ScoreProfileAliases[legacyName] = sourceName
+	return legacyName
 }
 
 func newNotifier(cfg config.Config) notify.Notifier {
@@ -150,8 +200,19 @@ func needsPanel(cfg policy.Config) bool {
 	if cfg.TorrentDisableAfter > 0 || cfg.BlockedDisableAfter > 0 {
 		return true
 	}
-	for _, profile := range cfg.Profiles {
-		if profile.DisableClientScore > 0 {
+	reachable := map[string]struct{}{}
+	for _, assignments := range []map[string]string{cfg.Assignments.Emails, cfg.Assignments.Inbounds, cfg.Assignments.Traffic} {
+		for _, profileName := range assignments {
+			reachable[profileName] = struct{}{}
+		}
+	}
+	for _, kind := range []string{"torrent", "blocked", "port_scan", "connection_rate"} {
+		if cfg.Assignments.Traffic[kind] == "" {
+			reachable["default"] = struct{}{}
+		}
+	}
+	for profileName := range reachable {
+		if cfg.Profiles[profileName].DisableClientScore > 0 {
 			return true
 		}
 	}
@@ -170,6 +231,9 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 	if err := a.restoreBans(ctx); err != nil {
+		return err
+	}
+	if err := a.pruneExpiredEvents(time.Now()); err != nil {
 		return err
 	}
 
@@ -208,8 +272,12 @@ func (a *App) Run(ctx context.Context) error {
 				a.Logger.Printf("handle event failed: %v", err)
 			}
 		case <-cleanup.C:
+			a.engine.Cleanup(time.Now())
 			if err := a.cleanupExpiredBans(ctx); err != nil {
 				a.Logger.Printf("cleanup failed: %v", err)
+			}
+			if err := a.pruneExpiredEvents(time.Now()); err != nil {
+				a.Logger.Printf("event retention cleanup failed: %v", err)
 			}
 		case now := <-reportTimer.C:
 			if err := a.sendPendingAccessReports(ctx, reportDayFor(now)); err != nil {
@@ -218,6 +286,18 @@ func (a *App) Run(ctx context.Context) error {
 			reportTimer.Reset(timeUntilNextMidnight(time.Now()))
 		}
 	}
+}
+
+func (a *App) pruneExpiredEvents(now time.Time) error {
+	days := a.Config.State.EventRetentionDays
+	if days <= 0 || (!a.lastEventPrune.IsZero() && now.Sub(a.lastEventPrune) < time.Hour) {
+		return nil
+	}
+	if _, err := a.store.DeleteEventsBefore(now.AddDate(0, 0, -days)); err != nil {
+		return err
+	}
+	a.lastEventPrune = now
+	return nil
 }
 
 func (a *App) HandleTestEvent(ctx context.Context, email string, ip string, tag string) error {

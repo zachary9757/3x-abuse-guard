@@ -102,12 +102,14 @@ Keep `127.0.0.1`/`::1` in `firewall.bypass_ips`; email-based scoring and client
 disablement still work, but public-source IP blocking is unavailable for that
 relay path.
 
+If systemd repeatedly reports `stat tail path` or `failed 5 consecutive times`, the configured access log is missing, unreadable, or no longer mounted. The daemon now exits instead of remaining falsely healthy. Fix the path or permissions, run `3x-abuse-guardctl doctor`, then restart the service.
+
 ## IP is blocked but client is not disabled
 
 Check:
 
 - Access log line includes `email: <client-email>`.
-- `policy.torrent_disable_client_after` is greater than 0.
+- The selected policy profile has `disable_client_score` greater than 0.
 - 3x-ui API token is valid and has `admin` scope, or login auth username/password is valid.
 - Client exists in 3x-ui with the same email.
 

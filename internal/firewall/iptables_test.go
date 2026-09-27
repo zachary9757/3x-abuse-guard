@@ -9,6 +9,7 @@ import (
 type recordingRunner struct {
 	calls []string
 	failC bool
+	fail  string
 }
 
 func (r *recordingRunner) Run(_ context.Context, name string, args ...string) error {
@@ -17,7 +18,18 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) er
 	if r.failC && strings.Contains(call, " -C ") {
 		return assertErr{}
 	}
+	if r.fail != "" && strings.Contains(call, r.fail) {
+		return assertErr{}
+	}
 	return nil
+}
+
+func TestIPTablesSetupReturnsIPv6Failure(t *testing.T) {
+	runner := &recordingRunner{fail: "ip6tables"}
+	firewall := &IPTables{Chain: "TEST", Runner: runner}
+	if err := firewall.Setup(context.Background()); err == nil {
+		t.Fatal("expected IPv6 setup failure")
+	}
 }
 
 type assertErr struct{}

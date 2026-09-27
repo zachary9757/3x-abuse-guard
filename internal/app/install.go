@@ -55,6 +55,13 @@ EnvironmentFile=-/etc/3x-abuse-guard/env
 ExecStart=%s run --config /etc/3x-abuse-guard/config.yaml
 Restart=on-failure
 RestartSec=5s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target

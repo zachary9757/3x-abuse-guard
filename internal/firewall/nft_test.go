@@ -10,6 +10,7 @@ import (
 type nftRunner struct {
 	elementExists bool
 	calls         []string
+	fail          string
 }
 
 func (r *nftRunner) Run(_ context.Context, name string, args ...string) error {
@@ -18,7 +19,26 @@ func (r *nftRunner) Run(_ context.Context, name string, args ...string) error {
 	if strings.Contains(call, " get element ") && !r.elementExists {
 		return errors.New("element not found")
 	}
+	if r.fail != "" && strings.Contains(call, r.fail) {
+		return errors.New("forced failure")
+	}
 	return nil
+}
+
+func TestNFTablesSetupReturnsFlushFailure(t *testing.T) {
+	runner := &nftRunner{fail: "flush set inet TEST blocked4"}
+	firewall := &NFTables{Table: "TEST", Chain: "TEST", Runner: runner}
+	if err := firewall.Setup(context.Background()); err == nil {
+		t.Fatal("expected flush failure")
+	}
+}
+
+func TestNFTablesUnblockReturnsDeleteFailure(t *testing.T) {
+	runner := &nftRunner{elementExists: true, fail: "delete element"}
+	firewall := &NFTables{Table: "TEST", Chain: "TEST", Runner: runner}
+	if err := firewall.Unblock(context.Background(), "198.51.100.10"); err == nil {
+		t.Fatal("expected delete failure")
+	}
 }
 
 func TestNFTablesBlockAddsMissingElement(t *testing.T) {

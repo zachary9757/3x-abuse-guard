@@ -88,6 +88,10 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
 | `/var/lib/3x-abuse-guard/state.db` | 事件和封禁状态 |
 | `/etc/systemd/system/3x-abuse-guard.service` | systemd 服务 |
 
+重复运行安装脚本时会保留已有的 `config.yaml` 和 `env`，并在替换二进制后显式重启已运行服务。只有确认要用新的命令行参数替换现有策略和凭据时，才使用 `--replace-config`；替换或启动失败时脚本会恢复安装前文件。
+
+Release 二进制必须通过发布页的 `checksums.txt` 校验；缺少校验文件时脚本会回退到源码构建。使用自定义 `--asset-url` 时必须同时提供 `--asset-sha256`。
+
 查看全部安装参数：
 
 ```bash
@@ -287,7 +291,7 @@ BT                         -> TORRENT
 
 3x-ui 3.8.5 的 **Restart Xray After Client Disable** 设置也作用于本项目调用的批量禁用接口。开启时，禁用客户端可能触发整个 Xray 重启，影响同一核心上的其他连接；关闭时，移除客户端凭据通常只阻止新连接，既有连接可能继续，来源 IP 封禁的效果还取决于是否能取得真实来源地址。
 
-是否开启应在 3x-ui 的 Xray 设置中明确选择。本项目遗留的 `panel.restart_xray` 字段目前未接入处置逻辑，不能覆盖面板的重启设置；将它设为 `false` 不代表面板不会重启 Xray。
+是否开启应在 3x-ui 的 Xray 设置中明确选择；本项目不覆盖面板的重启设置。
 
 ## 默认策略
 
@@ -333,9 +337,19 @@ policy:
   mode: "balanced"
   window_minutes: 60
   torrent_ip_block_on_first_hit: true
-  torrent_disable_client_after: 2
-  blocked_disable_client_after: 0
-  blocked_notify_after: 5
+  profiles:
+    default:
+      notify_score: 50
+      block_ip_score: 80
+      disable_client_score: 200
+    blocked_watch:
+      notify_score: 50
+      block_ip_score: 0
+      disable_client_score: 0
+
+state:
+  path: "/var/lib/3x-abuse-guard/state.db"
+  event_retention_days: 30
 ```
 
 重要配置：
@@ -351,6 +365,11 @@ policy:
 | `firewall.backend` | `iptables`、`nft` 或 `noop` |
 | `firewall.bypass_ips` | 永不执行防火墙封禁的来源 IP/CIDR，建议保留回环地址 |
 | `policy.mode` | `balanced`、`strict` 或 `observe` |
+| `policy.profiles` | 正式处置阈值；`0` 表示关闭对应动作 |
+| `policy.assignments` | 按 email、inbound 或风险类型选择 profile |
+| `state.event_retention_days` | 事件保留天数；`0` 表示不自动清理 |
+
+旧配置中的 `torrent_disable_client_after`、`blocked_disable_client_after` 和 `blocked_notify_after` 仍兼容，并会明确覆盖对应 traffic profile 的分数阈值。新配置不应再混用这两套表达方式；请直接修改 profiles。
 
 敏感信息放在 `/etc/3x-abuse-guard/env`，不要写进 `config.yaml`：
 
@@ -382,6 +401,8 @@ sudo 3x-abuse-guardctl test-event --email test --ip 198.51.100.10 --tag TORRENT
 ```
 
 Telegram 每天北京时间 00:00 发送前一天的访问统计，按 client email 分组；没有 email 时按来源 IP 分组。日报包含连接数、活跃时间、来源 IP、访问目标、入站、出站、协议和事件类型，不包含流量字节数。
+
+日报目前属于 best-effort 内存统计：守护进程重启会丢失尚未发送的当日汇总。守护进程也从 access log 文件末尾开始跟踪，不补处理停机期间的历史日志。Xray 日志时间戳按主机本地时区解释，而日报固定使用北京时间；部署时应确保主机/Xray 时区符合预期。
 
 ## 常用命令
 
@@ -459,6 +480,8 @@ go build ./cmd/3x-abuse-guard
 ```
 
 GitHub Actions 会在干净环境执行 `go test ./...`。依赖变化后应运行 `go mod tidy`，并同时提交 `go.mod` 和 `go.sum`。
+
+CI 同时执行 `go vet ./...`、安装脚本语法与重复执行测试，以及 `git diff --check`。
 
 ## 许可证
 

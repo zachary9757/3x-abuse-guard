@@ -64,7 +64,8 @@ func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
 	checks = append(checks, Check{"outbound " + cfg.Xray.BlockedTag, hasOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires blackhole outbound"})
 	torrentOK, torrentMessage := hasFirstProtocolRoutingOutbound(xrayConfig, cfg.Xray.TorrentTag, "bittorrent")
 	checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, torrentOK, torrentMessage})
-	checks = append(checks, Check{"routing " + cfg.Xray.BlockedTag, hasHighRiskRoutingOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires an ip or port block rule"})
+	blockedOK, blockedMessage := hasHighRiskRoutingOutbound(xrayConfig, cfg.Xray.BlockedTag)
+	checks = append(checks, Check{"routing " + cfg.Xray.BlockedTag, blockedOK, blockedMessage})
 	relayOK, relayMessage := hasNoAmneziaWGRouteBypass(xrayConfig, cfg.Xray.TorrentTag, cfg.Xray.BlockedTag)
 	checks = append(checks, Check{"routing AmneziaWG", relayOK, relayMessage})
 	sniffingOK, sniffingMessage := hasSniffingOnUserInbounds(xrayConfig)
@@ -77,6 +78,9 @@ func hasExpectedAccessLog(cfg map[string]any, expected string) (bool, string) {
 	access := stringValue(logConfig["access"])
 	if access == "" || strings.EqualFold(access, "none") {
 		return false, "Xray access logging is disabled"
+	}
+	if filepath.IsAbs(access) && filepath.IsAbs(expected) && filepath.Clean(access) != filepath.Clean(expected) {
+		return false, fmt.Sprintf("Xray writes %s but xray.access_log is %s", access, expected)
 	}
 	if filepath.Base(access) != filepath.Base(expected) {
 		return false, fmt.Sprintf("Xray writes %s but xray.access_log is %s", access, expected)
@@ -116,18 +120,37 @@ func hasFirstProtocolRoutingOutbound(cfg map[string]any, tag string, protocol st
 	return false, fmt.Sprintf("requires protocol %s rule routed to %s", protocol, tag)
 }
 
-func hasHighRiskRoutingOutbound(cfg map[string]any, tag string) bool {
+func hasHighRiskRoutingOutbound(cfg map[string]any, tag string) (bool, string) {
 	routing, _ := cfg["routing"].(map[string]any)
-	for _, rule := range list(routing["rules"]) {
+	found := false
+	for index, rule := range list(routing["rules"]) {
 		m, ok := rule.(map[string]any)
-		if !ok || m["outboundTag"] != tag {
+		if !ok {
 			continue
 		}
-		if hasValues(m["ip"]) || hasValues(m["port"]) {
-			return true
+		if isCatchAllRoutingRule(m) && !found {
+			return false, fmt.Sprintf("catch-all route at rule %d precedes %s abuse rules", index+1, tag)
+		}
+		if m["outboundTag"] == tag && (hasValues(m["ip"]) || hasValues(m["port"]) || hasValues(m["domain"])) {
+			found = true
 		}
 	}
-	return false
+	if !found {
+		return false, "requires an ip, port, or domain block rule"
+	}
+	return true, "abuse routes precede any catch-all route"
+}
+
+func isCatchAllRoutingRule(rule map[string]any) bool {
+	if stringValue(rule["outboundTag"]) == "" {
+		return false
+	}
+	for _, matcher := range []string{"inboundTag", "user", "protocol", "domain", "ip", "port", "network", "source", "sourcePort", "attrs"} {
+		if hasValues(rule[matcher]) {
+			return false
+		}
+	}
+	return true
 }
 
 func hasSniffingOnUserInbounds(cfg map[string]any) (bool, string) {
@@ -146,14 +169,20 @@ func hasSniffingOnUserInbounds(cfg map[string]any) (bool, string) {
 		if !ok {
 			continue
 		}
-		if enabled, ok := sniffing["enabled"].(bool); ok && enabled {
+		if hasRequiredSniffing(sniffing) {
 			enabledCount++
 		}
 	}
 	if total == 0 {
 		return false, "no user inbounds found"
 	}
-	return enabledCount == total, fmt.Sprintf("%d/%d user inbounds have sniffing enabled", enabledCount, total)
+	return enabledCount == total, fmt.Sprintf("%d/%d user inbounds have required sniffing (enabled, http/tls/quic, routeOnly)", enabledCount, total)
+}
+
+func hasRequiredSniffing(sniffing map[string]any) bool {
+	enabled, _ := sniffing["enabled"].(bool)
+	routeOnly, _ := sniffing["routeOnly"].(bool)
+	return enabled && routeOnly && contains(sniffing["destOverride"], "http") && contains(sniffing["destOverride"], "tls") && contains(sniffing["destOverride"], "quic")
 }
 
 // 3x-ui prepends these per-peer IPv6 egress rules to the saved routing rules.

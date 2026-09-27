@@ -46,9 +46,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now 3x-abuse-guard
 ```
 
+When upgrading with `scripts/install.sh`, existing configuration and credentials are preserved by default. The script restarts an already-running service so the new binary actually becomes active. Use `--replace-config` only when intentionally replacing the existing files; the script restores the previous files if installation or startup fails.
+
 Inspect:
 
 ```bash
 sudo journalctl -u 3x-abuse-guard -f --no-pager
 sudo 3x-abuse-guardctl status
 ```
+
+The generated unit applies a restrictive umask and basic systemd hardening (`NoNewPrivileges`, private temporary files, protected home directories, kernel tunables, and control groups) while retaining the root privileges required by iptables/nftables.

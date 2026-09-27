@@ -81,3 +81,15 @@ func TestPortScanSeparatesClientsSharingSourceIP(t *testing.T) {
 		t.Fatalf("findings = %#v", findings)
 	}
 }
+
+func TestCleanupRemovesInactiveActors(t *testing.T) {
+	pipeline := NewPipeline(DefaultConfig())
+	now := time.Now()
+	event := logwatch.Event{SourceIP: "198.51.100.10", Target: "example.com:443"}
+	pipeline.Detect(event, now.Add(-time.Hour))
+	pipeline.Cleanup(now)
+
+	if len(pipeline.portScanHistory) != 0 || len(pipeline.rateHistory) != 0 || len(pipeline.portScanLast) != 0 || len(pipeline.rateLast) != 0 {
+		t.Fatalf("inactive state was not removed: port=%v rate=%v", pipeline.portScanHistory, pipeline.rateHistory)
+	}
+}

@@ -7,7 +7,6 @@ panel:
   two_factor_code_env: "THREEX_ABUSE_GUARD_2FA_CODE"
   timeout_seconds: 10
   insecure_skip_verify: false
-  restart_xray: false
 
 xray:
   access_log: "/var/log/x-ui/access.log"
@@ -47,9 +46,6 @@ policy:
   mode: "balanced"
   window_minutes: 60
   torrent_ip_block_on_first_hit: true
-  torrent_disable_client_after: 2
-  blocked_disable_client_after: 0
-  blocked_notify_after: 5
   profiles:
     default:
       notify_score: 50
@@ -86,6 +82,4 @@ notify:
 
 state:
   path: "/var/lib/3x-abuse-guard/state.db"
-
-logging:
-  dir: "/var/log/3x-abuse-guard"
+  event_retention_days: 30

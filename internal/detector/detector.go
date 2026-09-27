@@ -141,6 +141,40 @@ func (p *Pipeline) Detect(ev logwatch.Event, now time.Time) []Finding {
 	return findings
 }
 
+func (p *Pipeline) Cleanup(now time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	p.pruneHistory(p.portScanHistory, now.Add(-minutes(p.cfg.PortScan.WindowMinutes, 5)))
+	p.pruneHistory(p.rateHistory, now.Add(-minutes(p.cfg.ConnectionRate.WindowMinutes, 5)))
+	pruneTimes(p.portScanLast, now.Add(-minutes(p.cfg.PortScan.CooldownMinutes, 5)))
+	pruneTimes(p.rateLast, now.Add(-minutes(p.cfg.ConnectionRate.CooldownMinutes, 5)))
+}
+
+func (p *Pipeline) pruneHistory(history map[string][]observation, cutoff time.Time) {
+	for key, observations := range history {
+		kept := observations[:0]
+		for _, obs := range observations {
+			if !obs.at.Before(cutoff) {
+				kept = append(kept, obs)
+			}
+		}
+		if len(kept) == 0 {
+			delete(history, key)
+			continue
+		}
+		history[key] = kept
+	}
+}
+
+func pruneTimes(values map[string]time.Time, cutoff time.Time) {
+	for key, value := range values {
+		if value.Before(cutoff) {
+			delete(values, key)
+		}
+	}
+}
+
 func (p *Pipeline) detectPortScan(ev logwatch.Event, now time.Time) (Finding, bool) {
 	port, ok := TargetPort(ev.Target)
 	if !ok {

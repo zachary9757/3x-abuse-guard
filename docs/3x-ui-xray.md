@@ -206,5 +206,5 @@ of every rule's effective runtime behavior: verify actual access logs too.
 In 3.8.5, **Restart Xray After Client Disable** also applies to bulk disable calls
 from this guard. Enabling it can restart the entire core and interrupt other
 clients; disabling it can leave already-established sessions alive after their
-credentials are removed. Choose this setting in 3x-ui. The guard's legacy
-`panel.restart_xray` field is not wired into enforcement and does not override it.
+credentials are removed. Choose this setting in 3x-ui. The guard does not
+expose a restart override and does not change the panel setting.

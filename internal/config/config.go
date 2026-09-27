@@ -26,7 +26,6 @@ type Config struct {
 	Policy    PolicyConfig    `yaml:"policy"`
 	Notify    NotifyConfig    `yaml:"notify"`
 	State     StateConfig     `yaml:"state"`
-	Logging   LoggingConfig   `yaml:"logging"`
 }
 
 type PanelConfig struct {
@@ -38,7 +37,6 @@ type PanelConfig struct {
 	TwoFactorCodeEnv   string `yaml:"two_factor_code_env"`
 	TimeoutSeconds     int    `yaml:"timeout_seconds"`
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
-	RestartXray        bool   `yaml:"restart_xray"`
 }
 
 type XrayConfig struct {
@@ -60,9 +58,9 @@ type PolicyConfig struct {
 	Mode                      string                         `yaml:"mode"`
 	WindowMinutes             int                            `yaml:"window_minutes"`
 	TorrentIPBlockOnFirstHit  bool                           `yaml:"torrent_ip_block_on_first_hit"`
-	TorrentDisableClientAfter int                            `yaml:"torrent_disable_client_after"`
-	BlockedDisableClientAfter int                            `yaml:"blocked_disable_client_after"`
-	BlockedNotifyAfter        int                            `yaml:"blocked_notify_after"`
+	TorrentDisableClientAfter *int                           `yaml:"torrent_disable_client_after,omitempty"`
+	BlockedDisableClientAfter *int                           `yaml:"blocked_disable_client_after,omitempty"`
+	BlockedNotifyAfter        *int                           `yaml:"blocked_notify_after,omitempty"`
 	Profiles                  map[string]PolicyProfileConfig `yaml:"profiles,omitempty"`
 	Assignments               PolicyAssignmentsConfig        `yaml:"assignments,omitempty"`
 }
@@ -86,11 +84,8 @@ type NotifyConfig struct {
 }
 
 type StateConfig struct {
-	Path string `yaml:"path"`
-}
-
-type LoggingConfig struct {
-	Dir string `yaml:"dir"`
+	Path               string `yaml:"path"`
+	EventRetentionDays int    `yaml:"event_retention_days"`
 }
 
 func Default() Config {
@@ -104,7 +99,6 @@ func Default() Config {
 			TwoFactorCodeEnv:   "THREEX_ABUSE_GUARD_2FA_CODE",
 			TimeoutSeconds:     10,
 			InsecureSkipVerify: false,
-			RestartXray:        false,
 		},
 		Xray: XrayConfig{
 			AccessLog:  "/var/log/x-ui/access.log",
@@ -119,12 +113,9 @@ func Default() Config {
 			BypassIPs:    []string{"127.0.0.1", "::1"},
 		},
 		Policy: PolicyConfig{
-			Mode:                      "balanced",
-			WindowMinutes:             60,
-			TorrentIPBlockOnFirstHit:  true,
-			TorrentDisableClientAfter: 2,
-			BlockedDisableClientAfter: 0,
-			BlockedNotifyAfter:        5,
+			Mode:                     "balanced",
+			WindowMinutes:            60,
+			TorrentIPBlockOnFirstHit: true,
 			Profiles: map[string]PolicyProfileConfig{
 				"default": {
 					NotifyScore:        50,
@@ -166,8 +157,10 @@ func Default() Config {
 			TelegramBotTokenEnv: "THREEX_ABUSE_GUARD_TELEGRAM_BOT_TOKEN",
 			TelegramChatIDEnv:   "THREEX_ABUSE_GUARD_TELEGRAM_CHAT_ID",
 		},
-		State:   StateConfig{Path: DefaultStatePath},
-		Logging: LoggingConfig{Dir: DefaultLogDir},
+		State: StateConfig{
+			Path:               DefaultStatePath,
+			EventRetentionDays: 30,
+		},
 	}
 }
 
@@ -257,8 +250,14 @@ func (c *Config) Validate() error {
 	if c.Policy.WindowMinutes <= 0 {
 		return errors.New("policy.window_minutes must be positive")
 	}
-	if c.Policy.TorrentDisableClientAfter < 0 || c.Policy.BlockedDisableClientAfter < 0 || c.Policy.BlockedNotifyAfter < 0 {
-		return errors.New("policy hit thresholds must not be negative")
+	for name, threshold := range map[string]*int{
+		"torrent_disable_client_after": c.Policy.TorrentDisableClientAfter,
+		"blocked_disable_client_after": c.Policy.BlockedDisableClientAfter,
+		"blocked_notify_after":         c.Policy.BlockedNotifyAfter,
+	} {
+		if threshold != nil && *threshold < 0 {
+			return fmt.Errorf("policy.%s must not be negative", name)
+		}
 	}
 	for name, profile := range c.Policy.Profiles {
 		if profile.NotifyScore < 0 || profile.BlockIPScore < 0 || profile.DisableClientScore < 0 {
@@ -278,6 +277,9 @@ func (c *Config) Validate() error {
 	}
 	if c.State.Path == "" {
 		return errors.New("state.path is required")
+	}
+	if c.State.EventRetentionDays < 0 {
+		return errors.New("state.event_retention_days must not be negative")
 	}
 	return nil
 }

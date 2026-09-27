@@ -113,6 +113,14 @@ func (s *Store) CountEvents(email string, kind string, since time.Time) (int, er
 }
 
 func (s *Store) SumScores(email string, sourceIP string, profile string, since time.Time) (int, error) {
+	return s.sumScores(email, sourceIP, profile, "", since)
+}
+
+func (s *Store) SumScoresForKind(email string, sourceIP string, profile string, kind string, since time.Time) (int, error) {
+	return s.sumScores(email, sourceIP, profile, kind, since)
+}
+
+func (s *Store) sumScores(email string, sourceIP string, profile string, kind string, since time.Time) (int, error) {
 	total := 0
 	err := s.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(eventsBucket).ForEach(func(_, v []byte) error {
@@ -124,6 +132,9 @@ func (s *Store) SumScores(email string, sourceIP string, profile string, since t
 				return nil
 			}
 			if profile != "" && rec.Profile != profile {
+				return nil
+			}
+			if kind != "" && rec.Kind != kind {
 				return nil
 			}
 			if email != "" {
@@ -158,6 +169,32 @@ func (s *Store) RecentEvents(limit int) ([]EventRecord, error) {
 		return nil
 	})
 	return events, err
+}
+
+func (s *Store) DeleteEventsBefore(cutoff time.Time) (int, error) {
+	if cutoff.IsZero() {
+		return 0, errors.New("event retention cutoff is required")
+	}
+	deleted := 0
+	err := s.update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(eventsBucket)
+		cursor := bucket.Cursor()
+		for key, value := cursor.First(); key != nil; key, value = cursor.Next() {
+			var rec EventRecord
+			if err := json.Unmarshal(value, &rec); err != nil {
+				return err
+			}
+			if !rec.CreatedAt.Before(cutoff) {
+				continue
+			}
+			if err := cursor.Delete(); err != nil {
+				return err
+			}
+			deleted++
+		}
+		return nil
+	})
+	return deleted, err
 }
 
 func (s *Store) UpsertBan(rec BanRecord) error {

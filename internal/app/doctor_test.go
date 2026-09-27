@@ -20,7 +20,14 @@ func amneziaWGRelay(sniffing bool) map[string]any {
 			"auth": "password", "udp": true,
 			"accounts": []any{map[string]any{"user": "alice", "pass": "test"}},
 		},
-		"sniffing": map[string]any{"enabled": sniffing},
+		"sniffing": validSniffing(sniffing),
+	}
+}
+
+func validSniffing(enabled bool) map[string]any {
+	return map[string]any{
+		"enabled": enabled, "routeOnly": true,
+		"destOverride": []any{"http", "tls", "quic"},
 	}
 }
 
@@ -85,7 +92,7 @@ func TestInspectXrayConfigAmneziaWGSniffing(t *testing.T) {
 			x := compatibilityConfig()
 			x["inbounds"] = []any{map[string]any{"tag": "api"}, amneziaWGRelay(tc.sniffing), map[string]any{"tag": "panel-egress", "listen": "127.0.0.1", "protocol": "socks"}}
 			if tc.mixed {
-				x["inbounds"] = append(list(x["inbounds"]), map[string]any{"tag": "inbound-2", "protocol": "vless", "sniffing": map[string]any{"enabled": true}})
+				x["inbounds"] = append(list(x["inbounds"]), map[string]any{"tag": "inbound-2", "protocol": "vless", "sniffing": validSniffing(true)})
 			}
 			check := findCheck(t, inspectXrayConfig(x, config.Default()), "sniffing")
 			if check.OK != tc.sniffing || strings.Contains(check.Message, "no user inbounds") {
@@ -130,7 +137,9 @@ func TestDoctorChecksRuntimeStatus(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/base/panel/api/server/getConfigJson":
-					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": compatibilityConfig()})
+					generated := compatibilityConfig()
+					generated["log"] = map[string]any{"access": cfg.Xray.AccessLog}
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": generated})
 				case "/base/panel/api/server/status":
 					w.WriteHeader(tc.statusCode)
 					_, _ = w.Write([]byte(tc.body))
@@ -203,7 +212,7 @@ func TestInspectXrayConfigAccepts3xUI360Configuration(t *testing.T) {
 		"inbounds": []any{
 			map[string]any{"tag": "api"},
 			map[string]any{"tag": "panel-egress", "protocol": "socks", "listen": "127.0.0.1"},
-			map[string]any{"tag": "inbound-1", "sniffing": map[string]any{"enabled": true}},
+			map[string]any{"tag": "inbound-1", "sniffing": validSniffing(true)},
 		},
 	}
 
@@ -228,7 +237,7 @@ func TestInspectXrayConfigRejectsEarlierDefaultBittorrentRule(t *testing.T) {
 			map[string]any{"ip": []any{"geoip:private"}, "outboundTag": "blocked"},
 		}},
 		"inbounds": []any{
-			map[string]any{"tag": "inbound-1", "sniffing": map[string]any{"enabled": true}},
+			map[string]any{"tag": "inbound-1", "sniffing": validSniffing(true)},
 		},
 	}
 
@@ -254,8 +263,8 @@ func TestInspectXrayConfigRejectsMisleadingMatches(t *testing.T) {
 			map[string]any{"protocol": []any{"bittorrent"}, "outboundTag": "blocked"},
 		}},
 		"inbounds": []any{
-			map[string]any{"tag": "inbound-1", "sniffing": map[string]any{"enabled": true}},
-			map[string]any{"tag": "inbound-2", "sniffing": map[string]any{"enabled": false}},
+			map[string]any{"tag": "inbound-1", "sniffing": validSniffing(true)},
+			map[string]any{"tag": "inbound-2", "sniffing": validSniffing(false)},
 		},
 	}
 
@@ -265,6 +274,42 @@ func TestInspectXrayConfigRejectsMisleadingMatches(t *testing.T) {
 		if check.OK {
 			t.Errorf("%s unexpectedly passed: %s", check.Name, check.Message)
 		}
+	}
+}
+
+func TestInspectXrayConfigRejectsCatchAllBeforeBlockedRoute(t *testing.T) {
+	xrayConfig := compatibilityConfig()
+	routing := xrayConfig["routing"].(map[string]any)
+	rules := list(routing["rules"])
+	routing["rules"] = append([]any{map[string]any{"outboundTag": "direct"}}, rules...)
+
+	check := findCheck(t, inspectXrayConfig(xrayConfig, config.Default()), "routing blocked")
+	if check.OK || !strings.Contains(check.Message, "catch-all") {
+		t.Fatalf("check = %+v", check)
+	}
+}
+
+func TestInspectXrayConfigRejectsIncompleteSniffing(t *testing.T) {
+	xrayConfig := compatibilityConfig()
+	xrayConfig["inbounds"] = []any{
+		map[string]any{"tag": "api"},
+		map[string]any{"tag": "inbound-1", "protocol": "vless", "sniffing": map[string]any{"enabled": true}},
+	}
+
+	check := findCheck(t, inspectXrayConfig(xrayConfig, config.Default()), "sniffing")
+	if check.OK {
+		t.Fatalf("check unexpectedly passed: %+v", check)
+	}
+}
+
+func TestExpectedAccessLogComparesAbsolutePaths(t *testing.T) {
+	ok, _ := hasExpectedAccessLog(map[string]any{"log": map[string]any{"access": "/other/access.log"}}, "/var/log/x-ui/access.log")
+	if ok {
+		t.Fatal("different absolute paths unexpectedly matched")
+	}
+	ok, _ = hasExpectedAccessLog(map[string]any{"log": map[string]any{"access": "access.log"}}, "/var/log/x-ui/access.log")
+	if !ok {
+		t.Fatal("filename-only panel config should remain compatible")
 	}
 }
 
