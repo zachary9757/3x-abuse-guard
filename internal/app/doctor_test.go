@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zachary9757/3x-abuse-guard/internal/config"
+	"github.com/zachary9757/3x-abuse-guard/internal/panel"
 )
 
 func amneziaWGRelay(sniffing bool) map[string]any {
@@ -110,7 +112,7 @@ func TestDoctorChecksRuntimeStatus(t *testing.T) {
 		wantOK     bool
 		message    string
 	}{
-		{"running", 200, `{"success":true,"obj":{"xray":{"state":"running","errorMsg":"","version":"26.9.9"}}}`, true, "running"},
+		{"running", 200, `{"success":true,"obj":{"xray":{"state":"running","errorMsg":"","version":"26.9.30"}}}`, true, "26.9.30"},
 		{"refused config", 200, `{"success":true,"obj":{"xray":{"state":"running","errorMsg":"config refused: port collision"}}}`, false, "config refused"},
 		{"stopped", 200, `{"success":true,"obj":{"xray":{"state":"stop"}}}`, false, "stop"},
 		{"core error", 200, `{"success":true,"obj":{"xray":{"state":"error","errorMsg":"failed to start"}}}`, false, "failed to start"},
@@ -140,6 +142,8 @@ func TestDoctorChecksRuntimeStatus(t *testing.T) {
 					generated := compatibilityConfig()
 					generated["log"] = map[string]any{"access": cfg.Xray.AccessLog}
 					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": generated})
+				case "/base/panel/api/inbounds/list":
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": []any{}})
 				case "/base/panel/api/server/status":
 					w.WriteHeader(tc.statusCode)
 					_, _ = w.Write([]byte(tc.body))
@@ -162,6 +166,110 @@ func TestDoctorChecksRuntimeStatus(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDoctorContinuesAfterInboundListFailure(t *testing.T) {
+	cfg := config.Default()
+	cfg.Panel.AuthMode = "token"
+	cfg.Panel.TokenEnv = "GUARD_DOCTOR_TEST_TOKEN"
+	t.Setenv(cfg.Panel.TokenEnv, "test-token")
+	cfg.Xray.AccessLog = filepath.Join(t.TempDir(), "access.log")
+	if err := os.WriteFile(cfg.Xray.AccessLog, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/panel/api/server/getConfigJson":
+			generated := compatibilityConfig()
+			generated["log"] = map[string]any{"access": cfg.Xray.AccessLog}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": generated})
+		case "/panel/api/inbounds/list":
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+		case "/panel/api/server/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"obj":     map[string]any{"xray": map[string]any{"state": "running", "version": "26.9.30"}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	cfg.Panel.BaseURL = server.URL
+
+	checks := Doctor(context.Background(), cfg)
+	tuic := findCheck(t, checks, "native TUIC attribution")
+	if tuic.OK || !strings.Contains(tuic.Message, "503") {
+		t.Fatalf("TUIC check = %+v", tuic)
+	}
+	if runtime := findCheck(t, checks, "xray runtime"); !runtime.OK {
+		t.Fatalf("runtime check = %+v", runtime)
+	}
+	if routing := findCheck(t, checks, "routing TORRENT"); !routing.OK {
+		t.Fatalf("routing check = %+v", routing)
+	}
+}
+
+func TestInspectNativeTUIC(t *testing.T) {
+	nodeID := 7
+	for _, tc := range []struct {
+		name      string
+		inbounds  []panel.Inbound
+		generated []any
+		wantOK    bool
+		message   string
+	}{
+		{"none", nil, nil, true, "no un-attributable"},
+		{"disabled", []panel.Inbound{{Enable: false, Protocol: "tuic", Tag: "tuic-1"}}, nil, true, "no un-attributable"},
+		{"remote node", []panel.Inbound{{Enable: true, Protocol: "tuic", Tag: "tuic-1", NodeID: &nodeID}}, nil, true, "no un-attributable"},
+		{
+			"v3.9 noauth relay",
+			[]panel.Inbound{{Enable: true, Protocol: "tuic", Tag: "tuic-1"}},
+			[]any{map[string]any{
+				"tag": "tuic-1", "protocol": "socks", "listen": "127.0.0.1",
+				"settings": map[string]any{"auth": "noauth", "udp": true},
+			}},
+			false,
+			"cannot reliably attribute",
+		},
+		{
+			"missing generated relay",
+			[]panel.Inbound{{Enable: true, Protocol: "tuic", Tag: "tuic-1"}},
+			nil,
+			false,
+			"no matching generated",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			check := inspectNativeTUIC(tc.inbounds, map[string]any{"inbounds": tc.generated})
+			if check.OK != tc.wantOK || !strings.Contains(check.Message, tc.message) {
+				t.Fatalf("check = %+v", check)
+			}
+		})
+	}
+}
+
+func TestPanelAPIErrorMessage(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		message string
+	}{
+		{http.StatusUnauthorized, "invalid, expired, or rotated"},
+		{http.StatusForbidden, "admin scope"},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "denied", tc.status)
+		}))
+		client, err := panel.New(server.URL, "secret", time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.GetConfigJSON(context.Background())
+		server.Close()
+		if err == nil || !strings.Contains(panelAPIErrorMessage(err), tc.message) {
+			t.Fatalf("message = %q", panelAPIErrorMessage(err))
+		}
 	}
 }
 

@@ -171,6 +171,96 @@ func TestDisableClientReportsSkippedClient(t *testing.T) {
 	}
 }
 
+func TestDisableClientRequiresOneChangedClient(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		obj  any
+	}{
+		{"zero changed", map[string]any{"changed": 0}},
+		{"missing result", nil},
+		{"unexpected count", map[string]any{"changed": 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				response := map[string]any{"success": true}
+				if tc.obj != nil {
+					response["obj"] = tc.obj
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
+
+			client, err := New(server.URL, "secret", time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.DisableClient(context.Background(), "alice"); err == nil {
+				t.Fatal("expected unconfirmed disable to fail")
+			}
+		})
+	}
+}
+
+func TestDisableClientDoesNotFallBackOnForbidden(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "denied", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, "secret", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DisableClient(context.Background(), "alice"); err == nil {
+		t.Fatal("expected forbidden error")
+	}
+	if requests != 1 {
+		t.Fatalf("forbidden request triggered fallback: %d requests", requests)
+	}
+}
+
+func TestGetInbounds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/panel/api/inbounds/list" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"obj":     []map[string]any{{"enable": true, "protocol": "tuic", "tag": "tuic-1", "nodeId": nil}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, "secret", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbounds, err := client.GetInbounds(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inbounds) != 1 || inbounds[0].Tag != "tuic-1" || inbounds[0].NodeID != nil {
+		t.Fatalf("unexpected inbounds: %#v", inbounds)
+	}
+}
+
+func TestGetInboundsRequiresResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, "secret", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetInbounds(context.Background()); err == nil {
+		t.Fatal("expected missing inbounds result to fail")
+	}
+}
+
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "msg": "nope"})

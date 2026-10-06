@@ -49,12 +49,21 @@ empty. It does not retry login when a configured Token is invalid or forbidden.
 
 ## `doctor` reports `xray runtime` failure
 
-Check the Xray state and error shown by 3x-ui. In 3.8.5, `config refused` can
+Check the Xray state and error shown by 3x-ui. In 3.9.0, `config refused` can
 mean the new configuration has conflicting ports while the old core remains
 running. Resolve the reported conflict and reapply the configuration before
 rerunning `doctor`. A healthy generated config does not prove it was applied.
 If `/panel/api/server/status` is inaccessible or returns no Xray state, the
 runtime check fails rather than assuming success.
+
+## `doctor` reports `native TUIC attribution` failure
+
+An enabled local Native TUIC inbound is using 3x-ui 3.9.0's anonymous loopback
+SOCKS5 relay. Xray can still route that traffic, but its access log cannot
+reliably identify the TUIC client, so the guard cannot safely score or disable
+that client. Keep `127.0.0.1` and `::1` bypassed; do not firewall the relay.
+Use another supported inbound for clients that require guard enforcement, or
+wait for an upstream authenticated relay or structured audit event.
 
 ## `doctor` reports `routing AmneziaWG` failure
 

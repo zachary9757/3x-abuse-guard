@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,6 +61,13 @@ type XrayStatus struct {
 	State    string `json:"state"`
 	ErrorMsg string `json:"errorMsg"`
 	Version  string `json:"version"`
+}
+
+type Inbound struct {
+	Enable   bool   `json:"enable"`
+	Protocol string `json:"protocol"`
+	Tag      string `json:"tag"`
+	NodeID   *int   `json:"nodeId"`
 }
 
 type bulkSetEnableResult struct {
@@ -169,6 +177,17 @@ func (c *Client) GetServerStatus(ctx context.Context) (ServerStatus, error) {
 	return out, err
 }
 
+func (c *Client) GetInbounds(ctx context.Context) ([]Inbound, error) {
+	var out []Inbound
+	if err := c.do(ctx, http.MethodGet, "/panel/api/inbounds/list", nil, &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, fmt.Errorf("panel inbounds response has no result")
+	}
+	return out, nil
+}
+
 func (c *Client) GetClient(ctx context.Context, email string) (ClientDetail, error) {
 	var out ClientDetail
 	if err := c.do(ctx, http.MethodGet, "/panel/api/clients/get/"+url.PathEscape(email), nil, &out); err != nil {
@@ -187,6 +206,9 @@ func (c *Client) DisableClient(ctx context.Context, email string) error {
 			if skipped.Email == email {
 				return fmt.Errorf("client %q was not disabled: %s", email, skipped.Reason)
 			}
+		}
+		if result.Changed != 1 {
+			return fmt.Errorf("client %q was not disabled: panel changed %d clients, want 1", email, result.Changed)
 		}
 		return nil
 	}
@@ -364,14 +386,22 @@ func isAuthRetryable(err error) bool {
 }
 
 func isStatus(err error, statuses ...int) bool {
-	statusErr, ok := err.(statusError)
+	actual, ok := StatusCode(err)
 	if !ok {
 		return false
 	}
 	for _, status := range statuses {
-		if statusErr.status == status {
+		if actual == status {
 			return true
 		}
 	}
 	return false
+}
+
+func StatusCode(err error) (int, bool) {
+	var statusErr statusError
+	if !errors.As(err, &statusErr) {
+		return 0, false
+	}
+	return statusErr.status, true
 }

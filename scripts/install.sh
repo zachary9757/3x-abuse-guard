@@ -759,7 +759,7 @@ print_next_steps() {
 安装完成。
 
 下一步：
-1. 确认 3x-ui 3.8.5 Token 使用 admin scope，并检查 Xray 运行状态、access log、TORRENT/blocked 出站、routing 规则和 sniffing。
+1. 确认 3x-ui 3.9.0 Token 使用 admin scope，并检查 Xray 运行状态、Native TUIC 归属、access log、TORRENT/blocked 出站、routing 规则和 sniffing。
    查看配置片段：
      3x-abuse-guard print-xray-policy
 

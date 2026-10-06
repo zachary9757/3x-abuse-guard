@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/zachary9757/3x-abuse-guard/internal/config"
+	"github.com/zachary9757/3x-abuse-guard/internal/panel"
 )
 
 type Check struct {
@@ -34,14 +35,20 @@ func Doctor(ctx context.Context, cfg config.Config) []Check {
 
 	xrayConfig, err := client.GetConfigJSON(ctx)
 	if err != nil {
-		checks = append(checks, Check{"panel api", false, err.Error()})
+		checks = append(checks, Check{"panel api", false, panelAPIErrorMessage(err)})
 		return checks
 	}
 	checks = append(checks, Check{"panel api", true, cfg.Panel.BaseURL})
+	inbounds, err := client.GetInbounds(ctx)
+	if err != nil {
+		checks = append(checks, Check{"native TUIC attribution", false, "cannot inspect panel inbounds: " + panelAPIErrorMessage(err)})
+	} else {
+		checks = append(checks, inspectNativeTUIC(inbounds, xrayConfig))
+	}
 	status, err := client.GetServerStatus(ctx)
 	switch {
 	case err != nil:
-		checks = append(checks, Check{"xray runtime", false, err.Error()})
+		checks = append(checks, Check{"xray runtime", false, panelAPIErrorMessage(err)})
 	case status.Xray == nil || strings.TrimSpace(status.Xray.State) == "":
 		checks = append(checks, Check{"xray runtime", false, "panel status has no Xray state; cannot verify runtime health"})
 	case strings.TrimSpace(status.Xray.ErrorMsg) != "":
@@ -49,11 +56,65 @@ func Doctor(ctx context.Context, cfg config.Config) []Check {
 	case status.Xray.State != "running":
 		checks = append(checks, Check{"xray runtime", false, "Xray is " + status.Xray.State})
 	default:
-		checks = append(checks, Check{"xray runtime", true, "Xray is running; panel reports no config error"})
+		message := "Xray is running"
+		if version := strings.TrimSpace(status.Xray.Version); version != "" {
+			message += " (" + version + ")"
+		}
+		checks = append(checks, Check{"xray runtime", true, message + "; panel reports no config error"})
 	}
 
 	checks = append(checks, inspectXrayConfig(xrayConfig, cfg)...)
 	return checks
+}
+
+func panelAPIErrorMessage(err error) string {
+	status, ok := panel.StatusCode(err)
+	if !ok {
+		return err.Error()
+	}
+	switch status {
+	case 401:
+		return err.Error() + "; token or login credentials are invalid, expired, or rotated"
+	case 403:
+		return err.Error() + "; 3x-ui API token requires admin scope"
+	default:
+		return err.Error()
+	}
+}
+
+func inspectNativeTUIC(inbounds []panel.Inbound, xrayConfig map[string]any) Check {
+	generated := map[string]map[string]any{}
+	for _, raw := range list(xrayConfig["inbounds"]) {
+		inbound, ok := raw.(map[string]any)
+		if ok {
+			generated[stringValue(inbound["tag"])] = inbound
+		}
+	}
+
+	var unsupported []string
+	var missing []string
+	for _, inbound := range inbounds {
+		if !inbound.Enable || inbound.NodeID != nil || !strings.EqualFold(inbound.Protocol, "tuic") {
+			continue
+		}
+		relay, ok := generated[inbound.Tag]
+		if !ok {
+			missing = append(missing, inbound.Tag)
+			continue
+		}
+		settings, _ := relay["settings"].(map[string]any)
+		listen := strings.Trim(stringValue(relay["listen"]), "[]")
+		if strings.EqualFold(stringValue(relay["protocol"]), "socks") && listen == "127.0.0.1" && strings.EqualFold(stringValue(settings["auth"]), "noauth") {
+			unsupported = append(unsupported, inbound.Tag)
+		}
+	}
+	if len(missing) > 0 {
+		return Check{"native TUIC attribution", false, fmt.Sprintf("enabled local TUIC inbounds %v have no matching generated Xray relay", missing)}
+	}
+	if len(unsupported) > 0 {
+		return Check{"native TUIC attribution", false, fmt.Sprintf("enabled local TUIC inbounds %v use a noauth loopback relay; Xray access logs cannot reliably attribute abuse to a client", unsupported)}
+	}
+	return Check{"native TUIC attribution", true, "no un-attributable local native TUIC relay found"}
 }
 
 func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
