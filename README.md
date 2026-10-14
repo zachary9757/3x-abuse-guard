@@ -13,14 +13,14 @@ Xray access log
 
 ## 适用版本与边界
 
-当前代码已按 [3x-ui `v3.10.0`](https://github.com/MHSanaei/3x-ui/releases/tag/v3.10.0) 及其内置 Xray-core `v26.10.10` 的源码和接口核对，并通过本项目单元测试；实际部署仍需执行下方健康检查：
+当前代码已按 [3x-ui `v3.10.2`](https://github.com/MHSanaei/3x-ui/releases/tag/v3.10.2) 及其内置 Xray-core `v26.10.10` 的源码和接口核对，并通过本项目单元测试；实际部署仍需执行下方健康检查：
 
 - 支持 Bearer Token 和面板账号密码登录。
 - 3x-ui 3.7.0 起的 Token 必须使用 `admin` scope；`monitor` 和 `node-sync` 权限不足。
 - 禁用客户端优先使用 `/panel/api/clients/bulkDisable`，旧版接口不可用时自动回退。
 - 支持 Xray access log 中的 `>>`、`->` 和 `==>` 路由分隔符。
 - Native AmneziaWG 经本机 SOCKS5 relay 进入 Xray：带 email 的事件仍可计分和禁用客户端，但不会封禁回环来源 IP。
-- 3x-ui 3.10.0 的本机 Native TUIC 仍使用无认证回环 SOCKS5 relay，Xray access log 无法可靠提供客户端身份；`doctor` 会将该入站报告为不受完整保护。
+- 3x-ui 3.10.2 的本机 Native TUIC 仍使用无认证回环 SOCKS5 relay，Xray access log 无法可靠提供客户端身份；`doctor` 会将该入站报告为不受完整保护。
 - `doctor` 会检查 Xray 运行状态和面板报告的配置错误，将带客户端认证的回环 relay 纳入 sniffing 检查，并识别 AmneziaWG 每客户端 IPv6 出口对后续防滥用规则的遮挡。
 - Xray-core v26.10.10 的 `routing.script` 会接管路由；检测到 Lua 路由时，`doctor` 会拒绝把静态防滥用规则报告为有效。
 
@@ -43,7 +43,7 @@ Xray access log
 
 ### 使用 API Token
 
-3x-ui 3.10.0 请创建 `admin` scope Token。Token 明文只在创建时显示一次；再次运行 `x-ui setting -getApiToken` 会轮换 `cli-fallback` Token，并立即使旧值失效。
+3x-ui 3.10.2 请创建 `admin` scope Token。Token 明文只在创建时显示一次；再次运行 `x-ui setting -getApiToken` 会轮换 `cli-fallback` Token，并立即使旧值失效。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
@@ -282,12 +282,14 @@ BT                         -> TORRENT
 
 `doctor` 会检查 access log、面板 API、Xray 运行状态和版本、Native TUIC 客户端归属、`TORRENT`/`blocked`、BT 路由顺序、AmneziaWG IPv6 出口遮挡，以及用户入站（含带认证客户端的回环 SOCKS/mixed relay）的 sniffing。状态接口不可用或缺少 Xray 状态时也会报错，不会假定运行正常。
 
-3x-ui 3.10.0 会拒绝导致 Xray 无法启动的配置。`getConfigJson` 返回生成配置，不是运行配置快照；若 `doctor` 的 `xray runtime` 报告 `config refused`，请先解决面板报告的错误并重新应用配置。检查通过仅说明配置检查通过且面板未报告运行错误，不证明每条规则已经被真实流量命中；`CN_BLOCKED`、UDP 规则及具体客户端的路由结果仍需通过 access/error log 实测。
+3x-ui 3.10.2 会拒绝导致 Xray 无法启动的配置。`getConfigJson` 返回生成配置，不是运行配置快照；若 `doctor` 的 `xray runtime` 报告 `config refused`，请先解决面板报告的错误并重新应用配置。检查通过仅说明配置检查通过且面板未报告运行错误，不证明每条规则已经被真实流量命中；`CN_BLOCKED`、UDP 规则及具体客户端的路由结果仍需通过 access/error log 实测。
 
-### 3x-ui 3.10.0 升级边界
+### 3x-ui 3.10.2 升级边界
 
 - 自动化客户端变更必须使用 `/panel/api/clients/*`；`/panel/api/inbounds/update` 不再修改客户端成员、启用状态、到期时间、流量额度或续订。本项目已经使用客户端专用接口。
-- master 和所有节点都应升级到 3x-ui 3.10.0；旧节点不会获得本版本的节点同步修复，也会拒绝 MASQUE 入站。
+- master 应升级到 3x-ui 3.10.2，以获得中央节点流量合并、多入站 flow 和 WireGuard/AmneziaWG 字段归属修复；所有节点也应保持同版本，避免混用时的行为差异。MASQUE 支持自 3.10.0 引入，更旧节点会拒绝该入站。
+- 3.10.2 会尽量原地应用多用户 Shadowsocks 客户端修改，但不应由此假定本项目的每次 `bulkDisable` 都不会重启 Xray；仍需保留下方的面板重启设置边界并在部署后验证。
+- 3.10.2 的完整 Xray 崩溃报告来自核心进程 stdout/stderr，不替代本项目依赖的 Xray access log。
 - 使用 XDNS 或 port hopping 的客户端应升级到基于 Xray-core v26.10.10 或更高版本的构建。
 - 私有 CA 签发的出站 TLS 必须在 3x-ui 中启用 **Use system CA**。
 - systemd 安装现在会沙箱化 x-ui。使用自定义 `XUI_LOG_FOLDER` 时，应确认生成的 `ReadWritePaths` 包含日志目录，且 `3x-abuse-guard` 能读取宿主机上的 access log。
@@ -296,7 +298,7 @@ BT                         -> TORRENT
 
 ### Native TUIC 的客户端归属
 
-3x-ui 3.10.0 的本机 Native TUIC 将解密后的流量转发到监听 `127.0.0.1` 的 Xray SOCKS5 relay。该 relay 仍使用 `noauth`，所以 Xray access log 不能可靠地把事件归属到 TUIC 客户端邮箱；同时回环地址必须继续保留在 `firewall.bypass_ips`，不能通过封禁 `127.0.0.1` 处理。
+3x-ui 3.10.2 的本机 Native TUIC 将解密后的流量转发到监听 `127.0.0.1` 的 Xray SOCKS5 relay。该 relay 仍使用 `noauth`，所以 Xray access log 不能可靠地把事件归属到 TUIC 客户端邮箱；同时回环地址必须继续保留在 `firewall.bypass_ips`，不能通过封禁 `127.0.0.1` 处理。
 
 检测到这种入站时，`doctor` 的 `native TUIC attribution` 会失败。本项目仍可检查生成的 Xray 路由，但不会声称能针对该 TUIC 客户端计分或禁用。只有上游 relay 保留客户端认证身份，或提供稳定的结构化审计事件后，才能安全扩展这一能力。
 
@@ -308,7 +310,7 @@ BT                         -> TORRENT
 
 ### 禁用客户端与 Xray 重启
 
-3x-ui 3.10.0 的 **Restart Xray After Client Disable** 设置也作用于本项目调用的批量禁用接口。开启时，禁用客户端可能触发整个 Xray 重启，影响同一核心上的其他连接；关闭时，移除客户端凭据通常只阻止新连接，既有连接可能继续，来源 IP 封禁的效果还取决于是否能取得真实来源地址。
+3x-ui 3.10.2 的 **Restart Xray After Client Disable** 设置也作用于本项目调用的批量禁用接口。开启时，禁用客户端可能触发整个 Xray 重启，影响同一核心上的其他连接；关闭时，移除客户端凭据通常只阻止新连接，既有连接可能继续，来源 IP 封禁的效果还取决于是否能取得真实来源地址。Shadowsocks 热更新降低了部分客户端修改的中断，但不改变这些安全边界。
 
 是否开启应在 3x-ui 的 Xray 设置中明确选择；本项目不覆盖面板的重启设置。
 

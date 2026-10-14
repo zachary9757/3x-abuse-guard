@@ -1,6 +1,6 @@
-# 3x-ui 3.10.0 / Xray Setup
+# 3x-ui 3.10.2 / Xray Setup
 
-This guide is checked against the source of 3x-ui `v3.10.0`, which bundles
+This guide is checked against the source of 3x-ui `v3.10.2`, which bundles
 Xray-core `v26.10.10`. Validate your deployed configuration with `doctor` and real access logs.
 
 `3x-abuse-guard` depends on the Xray access log and two outbound tags:
@@ -8,9 +8,9 @@ Xray-core `v26.10.10`. Validate your deployed configuration with `doctor` and re
 - `TORRENT`: torrent traffic, used for IP blocking and repeat-offender disablement.
 - `blocked`: high-risk IP or port traffic, used for visibility and optional notifications.
 
-## Important 3.10.0 Defaults
+## Important 3.10.2 Defaults
 
-The following relevant 3x-ui defaults remain present in 3.10.0:
+The following relevant 3x-ui defaults remain present in 3.10.2:
 
 - Xray access logging set to `none`.
 - A `blocked` blackhole outbound.
@@ -61,7 +61,7 @@ Enable the Xray access log:
 3x-ui stores configured Xray log filenames in its log directory. The default is
 `/var/log/x-ui`; `XUI_LOG_FOLDER` can override it. If 3x-ui runs in a container,
 `xray.access_log` in `3x-abuse-guard` must use the host-visible mounted path.
-3x-ui 3.10.0 also sandboxes the x-ui systemd service. If `XUI_LOG_FOLDER` is
+3x-ui 3.10.2 also sandboxes the x-ui systemd service. If `XUI_LOG_FOLDER` is
 customized, verify that the generated x-ui drop-in includes that directory in
 `ReadWritePaths` and that the guard can read the host-visible log.
 Confirm the real path before starting the daemon:
@@ -158,7 +158,7 @@ This sniffing schema remains valid with Xray-core `v26.10.10`. Xray recognizes
 bittorrent separately from `destOverride`, so `bittorrent` does not need to be
 added to that list.
 
-MASQUE is a user-facing protocol in 3x-ui 3.10.0 and is included in the same
+MASQUE remains a user-facing protocol in 3x-ui 3.10.2 and is included in the same
 sniffing check. Before relying on enforcement for MASQUE, verify a real,
 redacted access-log sample contains the expected source, inbound, outbound and
 client email.
@@ -168,7 +168,7 @@ Combine this project with 3x-ui traffic quotas and IP limits.
 
 ## Native AmneziaWG
 
-3x-ui 3.10.0 relays Native AmneziaWG traffic through an internal loopback
+3x-ui 3.10.2 relays Native AmneziaWG traffic through an internal loopback
 SOCKS5 inbound so Xray routing, sniffing, and the client email remain available.
 `3x-abuse-guard` therefore records matching events and can notify or disable the
 client by email. The Xray access log sees the relay's loopback source address,
@@ -189,7 +189,7 @@ rules. The guard diagnoses this limitation; it does not rewrite panel routing.
 
 ## Native TUIC
 
-3x-ui 3.10.0 provides a native TUIC v5 server that relays decrypted traffic into
+3x-ui 3.10.2 provides a native TUIC v5 server that relays decrypted traffic into
 Xray through a loopback SOCKS5 inbound. Unlike the Native AmneziaWG relay, the
 generated TUIC relay still uses `noauth`. Xray access logs therefore cannot reliably
 attribute a matching event to the TUIC client email, and the source address is
@@ -202,6 +202,21 @@ than the abusive client. This limitation requires an upstream authenticated
 relay or a stable structured audit event before the guard can safely enforce
 per-client actions.
 
+## 3.10.2 Client And Node Changes
+
+3x-ui 3.10.2 can apply multi-user Shadowsocks client changes in place and fixes
+node traffic merges that rewrote unchanged rows or let shared flow and
+WireGuard/AmneziaWG fields move between inbounds. These changes do not alter the
+guard's `bulkDisable` request or response contract. Do not assume they guarantee
+that every disable avoids an Xray restart: keep the panel's restart setting
+explicit and verify the result after deployment.
+
+Upgrade the master and every node together. For a multi-node or multi-inbound
+client, verify the enabled state and effective flow after a test-client disable,
+and verify WireGuard/AmneziaWG peer fields on the inbound that owns them. The
+complete core crash reports added in 3.10.2 capture Xray stdout/stderr; they do
+not replace the access log consumed by this guard.
+
 ## Apply And Verify
 
 Save the Xray configuration and restart Xray from 3x-ui. Then run:
@@ -210,7 +225,7 @@ Save the Xray configuration and restart Xray from 3x-ui. Then run:
 sudo 3x-abuse-guardctl doctor
 ```
 
-On 3x-ui 3.10.0, the configured API token must have the `admin` scope. A
+On 3x-ui 3.10.2, the configured API token must have the `admin` scope. A
 `monitor` or `node-sync` token cannot read the assembled Xray config used by
 this check.
 
@@ -233,8 +248,10 @@ reads `/panel/api/server/status` and fails for a non-running core, a reported
 `xray.errorMsg`, or an unavailable/missing status. A passing check is not proof
 of every rule's effective runtime behavior: verify actual access logs too.
 
-In 3.10.0, **Restart Xray After Client Disable** also applies to bulk disable calls
+In 3.10.2, **Restart Xray After Client Disable** also applies to bulk disable calls
 from this guard. Enabling it can restart the entire core and interrupt other
 clients; disabling it can leave already-established sessions alive after their
-credentials are removed. Choose this setting in 3x-ui. The guard does not
-expose a restart override and does not change the panel setting.
+credentials are removed. Shadowsocks hot apply reduces disruption for supported
+client edits, but it does not remove this operational boundary. Choose this
+setting in 3x-ui. The guard does not expose a restart override and does not
+change the panel setting.

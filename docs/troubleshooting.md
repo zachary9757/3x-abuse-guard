@@ -49,7 +49,7 @@ empty. It does not retry login when a configured Token is invalid or forbidden.
 
 ## `doctor` reports `xray runtime` failure
 
-Check the Xray state and error shown by 3x-ui. In 3.10.0, `config refused` can
+Check the Xray state and error shown by 3x-ui. In 3.10.2, `config refused` can
 mean the new configuration has conflicting ports while the old core remains
 running. Resolve the reported conflict and reapply the configuration before
 rerunning `doctor`. A healthy generated config does not prove it was applied.
@@ -58,7 +58,7 @@ runtime check fails rather than assuming success.
 
 ## `doctor` reports `native TUIC attribution` failure
 
-An enabled local Native TUIC inbound is using 3x-ui 3.10.0's anonymous loopback
+An enabled local Native TUIC inbound is using 3x-ui 3.10.2's anonymous loopback
 SOCKS5 relay. Xray can still route that traffic, but its access log cannot
 reliably identify the TUIC client, so the guard cannot safely score or disable
 that client. Keep `127.0.0.1` and `::1` bypassed; do not firewall the relay.
@@ -132,6 +132,14 @@ Check:
 - The selected policy profile has `disable_client_score` greater than 0.
 - 3x-ui API token is valid and has `admin` scope, or login auth username/password is valid.
 - Client exists in 3x-ui with the same email.
+
+For a multi-node deployment, keep the master and every node on 3x-ui 3.10.2.
+After testing with a non-production client, verify its enabled state on the
+master and affected node, plus its effective flow and any WireGuard/AmneziaWG
+peer fields when the same client belongs to several inbounds. The guard reports
+`bulkDisable` success only after the target is absent from `skipped` and the
+panel reports `changed == 1`; that confirms one central change was reported,
+but it does not replace checking node convergence.
 
 ## Port scan or connection-rate detector is too sensitive
 

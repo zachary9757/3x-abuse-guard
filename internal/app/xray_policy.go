@@ -1,6 +1,6 @@
 package app
 
-const XrayPolicySnippet = `3x-ui 3.10.0 (Xray-core v26.10.10) disables the Xray access log by default.
+const XrayPolicySnippet = `3x-ui 3.10.2 (Xray-core v26.10.10) disables the Xray access log by default.
 Enable it with filename access.log and make sure the host-visible path matches:
 
 {
@@ -26,7 +26,7 @@ Add TORRENT if it is not already present. 3x-ui already provides blocked:
   "settings": {}
 }
 
-3x-ui 3.10.0 includes a geoip:private block in direct.settings.finalRules.
+3x-ui 3.10.2 includes a geoip:private block in direct.settings.finalRules.
 Keep that defense-in-depth rule. It does not replace the explicit blocked
 routing rules below because it does not produce the blocked outbound tag.
 
@@ -82,7 +82,7 @@ these abuse rules. Resolve any routing AmneziaWG failure from doctor in the
 panel before relying on this policy. Doctor also checks Xray runtime errors;
 generated config alone does not prove the running core applied it.
 
-Native TUIC in 3x-ui 3.10.0 still uses a noauth loopback SOCKS5 relay. Doctor reports
+Native TUIC in 3x-ui 3.10.2 still uses a noauth loopback SOCKS5 relay. Doctor reports
 this as un-attributable because Xray access logs cannot reliably identify the
 TUIC client. Do not block the loopback relay or treat it as a real source IP.
 `
