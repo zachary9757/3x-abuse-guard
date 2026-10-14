@@ -49,7 +49,7 @@ empty. It does not retry login when a configured Token is invalid or forbidden.
 
 ## `doctor` reports `xray runtime` failure
 
-Check the Xray state and error shown by 3x-ui. In 3.9.0, `config refused` can
+Check the Xray state and error shown by 3x-ui. In 3.10.0, `config refused` can
 mean the new configuration has conflicting ports while the old core remains
 running. Resolve the reported conflict and reapply the configuration before
 rerunning `doctor`. A healthy generated config does not prove it was applied.
@@ -58,12 +58,23 @@ runtime check fails rather than assuming success.
 
 ## `doctor` reports `native TUIC attribution` failure
 
-An enabled local Native TUIC inbound is using 3x-ui 3.9.0's anonymous loopback
+An enabled local Native TUIC inbound is using 3x-ui 3.10.0's anonymous loopback
 SOCKS5 relay. Xray can still route that traffic, but its access log cannot
 reliably identify the TUIC client, so the guard cannot safely score or disable
 that client. Keep `127.0.0.1` and `::1` bypassed; do not firewall the relay.
 Use another supported inbound for clients that require guard enforcement, or
 wait for an upstream authenticated relay or structured audit event.
+
+## `doctor` reports `routing.script is active`
+
+Xray-core v26.10.10 uses the Lua routing script instead of the normal static
+rule path when `routing.script` is set. The guard cannot prove that arbitrary
+Lua preserves `TORRENT`, `blocked`, or AmneziaWG protections, so these checks
+fail closed even if matching static rules are still present.
+
+Clear the routing script and express the abuse policy with static rules before
+rerunning `doctor`. Do not treat the presence of unused static rules as proof
+that production traffic reaches the expected blackhole outbounds.
 
 ## `doctor` reports `routing AmneziaWG` failure
 

@@ -123,6 +123,17 @@ func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
 	checks = append(checks, Check{"xray access log", accessOK, accessMessage})
 	checks = append(checks, Check{"outbound " + cfg.Xray.TorrentTag, hasOutbound(xrayConfig, cfg.Xray.TorrentTag), "requires blackhole outbound"})
 	checks = append(checks, Check{"outbound " + cfg.Xray.BlockedTag, hasOutbound(xrayConfig, cfg.Xray.BlockedTag), "requires blackhole outbound"})
+	routing, _ := xrayConfig["routing"].(map[string]any)
+	routingScript, _ := routing["script"].(string)
+	if routingScript != "" {
+		message := "routing.script is active; Xray bypasses static routing.rules, so the guard cannot verify abuse routing"
+		checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, false, message})
+		checks = append(checks, Check{"routing " + cfg.Xray.BlockedTag, false, message})
+		checks = append(checks, Check{"routing AmneziaWG", false, message})
+		sniffingOK, sniffingMessage := hasSniffingOnUserInbounds(xrayConfig)
+		checks = append(checks, Check{"sniffing", sniffingOK, sniffingMessage})
+		return checks
+	}
 	torrentOK, torrentMessage := hasFirstProtocolRoutingOutbound(xrayConfig, cfg.Xray.TorrentTag, "bittorrent")
 	checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, torrentOK, torrentMessage})
 	blockedOK, blockedMessage := hasHighRiskRoutingOutbound(xrayConfig, cfg.Xray.BlockedTag)

@@ -104,6 +104,68 @@ func TestInspectXrayConfigAmneziaWGSniffing(t *testing.T) {
 	}
 }
 
+func TestInspectXrayConfigMASQUESniffing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		sniffing bool
+	}{
+		{"enabled", true},
+		{"disabled", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := compatibilityConfig()
+			x["inbounds"] = []any{
+				map[string]any{"tag": "api"},
+				map[string]any{"tag": "masque-1", "protocol": "masque", "sniffing": validSniffing(tc.sniffing)},
+			}
+			check := findCheck(t, inspectXrayConfig(x, config.Default()), "sniffing")
+			if check.OK != tc.sniffing {
+				t.Fatalf("check = %+v", check)
+			}
+		})
+	}
+}
+
+func TestInspectXrayConfigRejectsLuaRoutingScript(t *testing.T) {
+	x := compatibilityConfig()
+	x["routing"].(map[string]any)["script"] = "route.lua"
+
+	checks := inspectXrayConfig(x, config.Default())
+	for _, name := range []string{"routing TORRENT", "routing blocked", "routing AmneziaWG"} {
+		check := findCheck(t, checks, name)
+		if check.OK || !strings.Contains(check.Message, "routing.script") {
+			t.Errorf("%s check = %+v", name, check)
+		}
+	}
+	for _, name := range []string{"xray access log", "outbound TORRENT", "outbound blocked", "sniffing"} {
+		if check := findCheck(t, checks, name); !check.OK {
+			t.Errorf("unrelated %s check failed: %+v", name, check)
+		}
+	}
+}
+
+func TestInspectXrayConfigLuaRoutingScriptEmptyValue(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+		wantOK bool
+	}{
+		{"empty", "", true},
+		{"whitespace", "  ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := compatibilityConfig()
+			x["routing"].(map[string]any)["script"] = tc.script
+			for _, name := range []string{"routing TORRENT", "routing blocked", "routing AmneziaWG"} {
+				check := findCheck(t, inspectXrayConfig(x, config.Default()), name)
+				if check.OK != tc.wantOK {
+					t.Errorf("%s check = %+v", name, check)
+				}
+			}
+		})
+	}
+}
+
 func TestDoctorChecksRuntimeStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -112,7 +174,7 @@ func TestDoctorChecksRuntimeStatus(t *testing.T) {
 		wantOK     bool
 		message    string
 	}{
-		{"running", 200, `{"success":true,"obj":{"xray":{"state":"running","errorMsg":"","version":"26.9.30"}}}`, true, "26.9.30"},
+		{"running", 200, `{"success":true,"obj":{"xray":{"state":"running","errorMsg":"","version":"26.10.10"}}}`, true, "26.10.10"},
 		{"refused config", 200, `{"success":true,"obj":{"xray":{"state":"running","errorMsg":"config refused: port collision"}}}`, false, "config refused"},
 		{"stopped", 200, `{"success":true,"obj":{"xray":{"state":"stop"}}}`, false, "stop"},
 		{"core error", 200, `{"success":true,"obj":{"xray":{"state":"error","errorMsg":"failed to start"}}}`, false, "failed to start"},
@@ -189,7 +251,7 @@ func TestDoctorContinuesAfterInboundListFailure(t *testing.T) {
 		case "/panel/api/server/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
-				"obj":     map[string]any{"xray": map[string]any{"state": "running", "version": "26.9.30"}},
+				"obj":     map[string]any{"xray": map[string]any{"state": "running", "version": "26.10.10"}},
 			})
 		default:
 			http.NotFound(w, r)
@@ -224,7 +286,7 @@ func TestInspectNativeTUIC(t *testing.T) {
 		{"disabled", []panel.Inbound{{Enable: false, Protocol: "tuic", Tag: "tuic-1"}}, nil, true, "no un-attributable"},
 		{"remote node", []panel.Inbound{{Enable: true, Protocol: "tuic", Tag: "tuic-1", NodeID: &nodeID}}, nil, true, "no un-attributable"},
 		{
-			"v3.9 noauth relay",
+			"v3.10 noauth relay",
 			[]panel.Inbound{{Enable: true, Protocol: "tuic", Tag: "tuic-1"}},
 			[]any{map[string]any{
 				"tag": "tuic-1", "protocol": "socks", "listen": "127.0.0.1",

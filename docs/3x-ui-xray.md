@@ -1,16 +1,16 @@
-# 3x-ui 3.9.0 / Xray Setup
+# 3x-ui 3.10.0 / Xray Setup
 
-This guide is checked against the source of 3x-ui `v3.9.0`, which bundles
-Xray-core `v26.9.30`. Validate your deployed configuration with `doctor` and real access logs.
+This guide is checked against the source of 3x-ui `v3.10.0`, which bundles
+Xray-core `v26.10.10`. Validate your deployed configuration with `doctor` and real access logs.
 
 `3x-abuse-guard` depends on the Xray access log and two outbound tags:
 
 - `TORRENT`: torrent traffic, used for IP blocking and repeat-offender disablement.
 - `blocked`: high-risk IP or port traffic, used for visibility and optional notifications.
 
-## Important 3.9.0 Defaults
+## Important 3.10.0 Defaults
 
-The following relevant 3x-ui defaults remain present in 3.9.0:
+The following relevant 3x-ui defaults remain present in 3.10.0:
 
 - Xray access logging set to `none`.
 - A `blocked` blackhole outbound.
@@ -61,6 +61,9 @@ Enable the Xray access log:
 3x-ui stores configured Xray log filenames in its log directory. The default is
 `/var/log/x-ui`; `XUI_LOG_FOLDER` can override it. If 3x-ui runs in a container,
 `xray.access_log` in `3x-abuse-guard` must use the host-visible mounted path.
+3x-ui 3.10.0 also sandboxes the x-ui systemd service. If `XUI_LOG_FOLDER` is
+customized, verify that the generated x-ui drop-in includes that directory in
+`ReadWritePaths` and that the guard can read the host-visible log.
 Confirm the real path before starting the daemon:
 
 ```bash
@@ -96,6 +99,11 @@ The resulting configuration must contain both blackhole outbounds:
 ```
 
 ## Routing Rules
+
+Leave `routing.script` empty. Xray-core v26.10.10 routes through the Lua script
+when this field is set, so the static rules below no longer prove the effective
+route. `doctor` fails the static routing checks when it detects an active script;
+the guard does not parse or execute arbitrary Lua.
 
 Keep 3x-ui's internal `api -> api` rule first. Replace the existing
 `bittorrent -> blocked` rule with the following rule, or insert this rule before
@@ -146,16 +154,21 @@ Enable sniffing on every user-facing inbound:
 }
 ```
 
-This sniffing schema remains valid with Xray-core `v26.9.30`. Xray recognizes
+This sniffing schema remains valid with Xray-core `v26.10.10`. Xray recognizes
 bittorrent separately from `destOverride`, so `bittorrent` does not need to be
 added to that list.
+
+MASQUE is a user-facing protocol in 3x-ui 3.10.0 and is included in the same
+sniffing check. Before relying on enforcement for MASQUE, verify a real,
+redacted access-log sample contains the expected source, inbound, outbound and
+client email.
 
 Encrypted or obfuscated torrent traffic can still evade protocol detection.
 Combine this project with 3x-ui traffic quotas and IP limits.
 
 ## Native AmneziaWG
 
-3x-ui 3.9.0 relays Native AmneziaWG traffic through an internal loopback
+3x-ui 3.10.0 relays Native AmneziaWG traffic through an internal loopback
 SOCKS5 inbound so Xray routing, sniffing, and the client email remain available.
 `3x-abuse-guard` therefore records matching events and can notify or disable the
 client by email. The Xray access log sees the relay's loopback source address,
@@ -176,9 +189,9 @@ rules. The guard diagnoses this limitation; it does not rewrite panel routing.
 
 ## Native TUIC
 
-3x-ui 3.9.0 adds a native TUIC v5 server that relays decrypted traffic into
+3x-ui 3.10.0 provides a native TUIC v5 server that relays decrypted traffic into
 Xray through a loopback SOCKS5 inbound. Unlike the Native AmneziaWG relay, the
-generated TUIC relay uses `noauth`. Xray access logs therefore cannot reliably
+generated TUIC relay still uses `noauth`. Xray access logs therefore cannot reliably
 attribute a matching event to the TUIC client email, and the source address is
 the loopback relay rather than the client's public address.
 
@@ -197,7 +210,7 @@ Save the Xray configuration and restart Xray from 3x-ui. Then run:
 sudo 3x-abuse-guardctl doctor
 ```
 
-On 3x-ui 3.9.0, the configured API token must have the `admin` scope. A
+On 3x-ui 3.10.0, the configured API token must have the `admin` scope. A
 `monitor` or `node-sync` token cannot read the assembled Xray config used by
 this check.
 
@@ -206,6 +219,7 @@ The check must pass for:
 - the host access-log file and Xray access-log setting;
 - a running Xray core with no panel-reported config error;
 - no enabled local Native TUIC relay that loses client attribution;
+- no active `routing.script` that bypasses the static abuse rules;
 - `TORRENT` and `blocked` blackhole outbounds;
 - `bittorrent -> TORRENT`;
 - no earlier `bittorrent` rule targeting `blocked` or another outbound;
@@ -219,7 +233,7 @@ reads `/panel/api/server/status` and fails for a non-running core, a reported
 `xray.errorMsg`, or an unavailable/missing status. A passing check is not proof
 of every rule's effective runtime behavior: verify actual access logs too.
 
-In 3.9.0, **Restart Xray After Client Disable** also applies to bulk disable calls
+In 3.10.0, **Restart Xray After Client Disable** also applies to bulk disable calls
 from this guard. Enabling it can restart the entire core and interrupt other
 clients; disabling it can leave already-established sessions alive after their
 credentials are removed. Choose this setting in 3x-ui. The guard does not
