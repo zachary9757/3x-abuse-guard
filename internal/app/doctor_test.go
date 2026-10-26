@@ -265,6 +265,9 @@ func TestDoctorContinuesAfterInboundListFailure(t *testing.T) {
 	if tuic.OK || !strings.Contains(tuic.Message, "503") {
 		t.Fatalf("TUIC check = %+v", tuic)
 	}
+	if kernel := findCheck(t, checks, "kernel AmneziaWG protection"); kernel.OK || !strings.Contains(kernel.Message, "503") {
+		t.Fatalf("kernel check = %+v", kernel)
+	}
 	if runtime := findCheck(t, checks, "xray runtime"); !runtime.OK {
 		t.Fatalf("runtime check = %+v", runtime)
 	}
@@ -310,6 +313,112 @@ func TestInspectNativeTUIC(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNativeTUICAuthenticatedRelay(t *testing.T) {
+	for _, tc := range []struct {
+		name, protocol, listen, auth string
+		accounts                     []any
+		wantOK                       bool
+	}{
+		{"v3.11", "socks", "127.0.0.1", "password", []any{map[string]any{"user": "alice"}}, true},
+		{"IPv6 loopback", "socks", "[::1]", "password", []any{map[string]any{"user": "alice"}}, true},
+		{"wrong protocol", "vless", "127.0.0.1", "password", []any{map[string]any{"user": "alice"}}, false},
+		{"public listener", "socks", "0.0.0.0", "password", []any{map[string]any{"user": "alice"}}, false},
+		{"noauth", "socks", "127.0.0.1", "noauth", []any{map[string]any{"user": "alice"}}, false},
+		{"missing accounts", "socks", "127.0.0.1", "password", nil, false},
+		{"empty user", "socks", "127.0.0.1", "password", []any{map[string]any{"user": " "}}, false},
+		{"invalid user type", "socks", "127.0.0.1", "password", []any{map[string]any{"user": 1}}, false},
+		{"one anonymous account", "socks", "127.0.0.1", "password", []any{map[string]any{"user": "alice"}, map[string]any{}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := compatibilityConfig()
+			x["inbounds"] = []any{map[string]any{
+				"tag": "tuic-1", "protocol": tc.protocol, "listen": tc.listen,
+				"settings": map[string]any{"auth": tc.auth, "accounts": tc.accounts},
+				"sniffing": validSniffing(true),
+			}}
+			check := inspectNativeTUIC([]panel.Inbound{{Enable: true, Protocol: "tuic", Tag: "tuic-1"}}, x)
+			if check.OK != tc.wantOK {
+				t.Fatalf("check = %+v", check)
+			}
+			if tc.wantOK && !findCheck(t, inspectXrayConfig(x, config.Default()), "sniffing").OK {
+				t.Fatal("authenticated TUIC relay must count as a user inbound")
+			}
+		})
+	}
+}
+
+func TestKernelAmneziaWGProtection(t *testing.T) {
+	nodeID := 7
+	for _, tc := range []struct {
+		name, settings string
+		enabled        bool
+		nodeID         *int
+		wantOK         bool
+	}{
+		{"embedded legacy", `{"server":{}}`, true, nil, true},
+		{"embedded explicit", `{"server":{"kernelMode":false}}`, true, nil, true},
+		{"kernel", `{"server":{"kernelMode":true}}`, true, nil, false},
+		{"disabled kernel", `{"server":{"kernelMode":true}}`, false, nil, true},
+		{"remote kernel", `{"server":{"kernelMode":true}}`, true, &nodeID, true},
+		{"missing", "", true, nil, false},
+		{"malformed", "{", true, nil, false},
+		{"missing server", `{}`, true, nil, false},
+		{"null server", `{"server":null}`, true, nil, false},
+		{"invalid kernel type", `{"server":{"kernelMode":"true"}}`, true, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			check := inspectKernelAmneziaWG([]panel.Inbound{
+				{Enable: tc.enabled, Protocol: "amneziawg", Tag: "awg-1", NodeID: tc.nodeID, Settings: tc.settings},
+				{Enable: true, Protocol: "vless", Tag: "normal-1"},
+			})
+			if check.OK != tc.wantOK || (!check.OK && !strings.Contains(check.Message, "awg-1")) {
+				t.Fatalf("check = %+v", check)
+			}
+		})
+	}
+}
+
+func TestDoctorRejectsKernelAmneziaWGWithHealthyXray(t *testing.T) {
+	cfg := config.Default()
+	cfg.Panel.AuthMode = "token"
+	cfg.Panel.TokenEnv = "GUARD_DOCTOR_TEST_TOKEN"
+	t.Setenv(cfg.Panel.TokenEnv, "test-token")
+	cfg.Xray.AccessLog = filepath.Join(t.TempDir(), "access.log")
+	if err := os.WriteFile(cfg.Xray.AccessLog, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var obj any
+		switch r.URL.Path {
+		case "/panel/api/server/getConfigJson":
+			x := compatibilityConfig()
+			x["log"] = map[string]any{"access": cfg.Xray.AccessLog}
+			obj = x
+		case "/panel/api/inbounds/list":
+			obj = []panel.Inbound{{Enable: true, Protocol: "amneziawg", Tag: "kernel-1", Settings: `{"server":{"kernelMode":true}}`}}
+		case "/panel/api/server/status":
+			obj = map[string]any{"xray": map[string]any{"state": "running", "version": "26.10.21"}}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": obj})
+	}))
+	defer server.Close()
+	cfg.Panel.BaseURL = server.URL
+	checks := Doctor(context.Background(), cfg)
+	for _, check := range checks {
+		if check.Name == "kernel AmneziaWG protection" {
+			if check.OK || !strings.Contains(check.Message, "kernel-1") {
+				t.Fatalf("kernel check = %+v", check)
+			}
+		} else if !check.OK {
+			t.Fatalf("unrelated check failed: %+v", check)
+		}
+	}
+	findCheck(t, checks, "kernel AmneziaWG protection")
 }
 
 func TestPanelAPIErrorMessage(t *testing.T) {

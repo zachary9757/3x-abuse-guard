@@ -228,7 +228,7 @@ func TestGetInbounds(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": true,
-			"obj":     []map[string]any{{"enable": true, "protocol": "tuic", "tag": "tuic-1", "nodeId": nil}},
+			"obj":     []map[string]any{{"enable": true, "protocol": "tuic", "tag": "tuic-1", "nodeId": nil, "settings": `{"server":{"kernelMode":true}}`}},
 		})
 	}))
 	defer server.Close()
@@ -243,6 +243,9 @@ func TestGetInbounds(t *testing.T) {
 	}
 	if len(inbounds) != 1 || inbounds[0].Tag != "tuic-1" || inbounds[0].NodeID != nil {
 		t.Fatalf("unexpected inbounds: %#v", inbounds)
+	}
+	if inbounds[0].Settings != `{"server":{"kernelMode":true}}` {
+		t.Fatalf("settings lost: %q", inbounds[0].Settings)
 	}
 }
 

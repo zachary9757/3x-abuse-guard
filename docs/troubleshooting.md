@@ -49,7 +49,7 @@ empty. It does not retry login when a configured Token is invalid or forbidden.
 
 ## `doctor` reports `xray runtime` failure
 
-Check the Xray state and error shown by 3x-ui. In 3.10.2, `config refused` can
+Check the Xray state and error shown by 3x-ui. In 3.11.0, `config refused` can
 mean the new configuration has conflicting ports while the old core remains
 running. Resolve the reported conflict and reapply the configuration before
 rerunning `doctor`. A healthy generated config does not prove it was applied.
@@ -58,19 +58,26 @@ runtime check fails rather than assuming success.
 
 ## `doctor` reports `native TUIC attribution` failure
 
-An enabled local Native TUIC inbound is using 3x-ui 3.10.2's anonymous loopback
-SOCKS5 relay. Xray can still route that traffic, but its access log cannot
-reliably identify the TUIC client, so the guard cannot safely score or disable
-that client. Keep `127.0.0.1` and `::1` bypassed; do not firewall the relay.
-Use another supported inbound for clients that require guard enforcement, or
-wait for an upstream authenticated relay or structured audit event.
+The generated relay is missing or lacks a loopback SOCKS listener, password
+authentication, or nonempty user identities on every account. 3x-ui 3.11.0
+generates authenticated relays using client email; older versions use `noauth`.
+Upgrade and reapply the panel configuration, then verify a redacted access-log
+sample contains the expected email. Keep `127.0.0.1` and `::1` bypassed.
+
+## `doctor` reports `kernel AmneziaWG protection` failure
+
+An enabled local AmneziaWG inbound uses `settings.server.kernelMode=true`, or
+its settings cannot be inspected. Kernel mode bypasses Xray access logs and
+abuse routing, so this guard cannot protect it. Disable kernel mode for guard
+protection or repair malformed settings, reapply and rerun `doctor`. A passing
+master check does not cover remote inbounds: run the check on their actual node.
 
 ## `doctor` reports `routing.script is active`
 
-Xray-core v26.10.10 uses the Lua routing script instead of the normal static
-rule path when `routing.script` is set. The guard cannot prove that arbitrary
-Lua preserves `TORRENT`, `blocked`, or AmneziaWG protections, so these checks
-fail closed even if matching static rules are still present.
+3x-ui 3.11.0 refuses routing scripts beside its mandatory API rule and drops
+incompatible legacy scripts from generated config. Older/custom deployments
+may still expose scripts that bypass static rules. The guard cannot prove that
+arbitrary Lua preserves abuse protections, so the check remains fail-closed.
 
 Clear the routing script and express the abuse policy with static rules before
 rerunning `doctor`. Do not treat the presence of unused static rules as proof
@@ -117,7 +124,7 @@ Check:
 - Routing has `protocol: ["bittorrent"] -> TORRENT`.
 - The `TORRENT` outbound exists and uses `blackhole`.
 
-For Native AmneziaWG, Xray logs the internal loopback relay as the source IP.
+For embedded AmneziaWG and Native TUIC, Xray logs the internal loopback relay as the source IP.
 Keep `127.0.0.1`/`::1` in `firewall.bypass_ips`; email-based scoring and client
 disablement still work, but public-source IP blocking is unavailable for that
 relay path.
@@ -133,7 +140,7 @@ Check:
 - 3x-ui API token is valid and has `admin` scope, or login auth username/password is valid.
 - Client exists in 3x-ui with the same email.
 
-For a multi-node deployment, keep the master and every node on 3x-ui 3.10.2.
+For a multi-node deployment, keep the master and every node on 3x-ui 3.11.0.
 After testing with a non-production client, verify its enabled state on the
 master and affected node, plus its effective flow and any WireGuard/AmneziaWG
 peer fields when the same client belongs to several inbounds. The guard reports

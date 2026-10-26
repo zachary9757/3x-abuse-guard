@@ -68,6 +68,7 @@ type Inbound struct {
 	Protocol string `json:"protocol"`
 	Tag      string `json:"tag"`
 	NodeID   *int   `json:"nodeId"`
+	Settings string `json:"settings"`
 }
 
 type bulkSetEnableResult struct {

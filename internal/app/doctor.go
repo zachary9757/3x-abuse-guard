@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,8 +43,10 @@ func Doctor(ctx context.Context, cfg config.Config) []Check {
 	inbounds, err := client.GetInbounds(ctx)
 	if err != nil {
 		checks = append(checks, Check{"native TUIC attribution", false, "cannot inspect panel inbounds: " + panelAPIErrorMessage(err)})
+		checks = append(checks, Check{"kernel AmneziaWG protection", false, "cannot inspect panel inbounds: " + panelAPIErrorMessage(err)})
 	} else {
 		checks = append(checks, inspectNativeTUIC(inbounds, xrayConfig))
+		checks = append(checks, inspectKernelAmneziaWG(inbounds))
 	}
 	status, err := client.GetServerStatus(ctx)
 	switch {
@@ -104,7 +107,19 @@ func inspectNativeTUIC(inbounds []panel.Inbound, xrayConfig map[string]any) Chec
 		}
 		settings, _ := relay["settings"].(map[string]any)
 		listen := strings.Trim(stringValue(relay["listen"]), "[]")
-		if strings.EqualFold(stringValue(relay["protocol"]), "socks") && listen == "127.0.0.1" && strings.EqualFold(stringValue(settings["auth"]), "noauth") {
+		identified := false
+		accounts := list(settings["accounts"])
+		if len(accounts) > 0 {
+			identified = true
+			for _, raw := range accounts {
+				account, ok := raw.(map[string]any)
+				user, userOK := account["user"].(string)
+				if !ok || !userOK || strings.TrimSpace(user) == "" {
+					identified = false
+				}
+			}
+		}
+		if !strings.EqualFold(stringValue(relay["protocol"]), "socks") || (listen != "127.0.0.1" && listen != "::1") || !strings.EqualFold(stringValue(settings["auth"]), "password") || !identified {
 			unsupported = append(unsupported, inbound.Tag)
 		}
 	}
@@ -112,9 +127,34 @@ func inspectNativeTUIC(inbounds []panel.Inbound, xrayConfig map[string]any) Chec
 		return Check{"native TUIC attribution", false, fmt.Sprintf("enabled local TUIC inbounds %v have no matching generated Xray relay", missing)}
 	}
 	if len(unsupported) > 0 {
-		return Check{"native TUIC attribution", false, fmt.Sprintf("enabled local TUIC inbounds %v use a noauth loopback relay; Xray access logs cannot reliably attribute abuse to a client", unsupported)}
+		return Check{"native TUIC attribution", false, fmt.Sprintf("enabled local TUIC inbounds %v require a password-authenticated loopback SOCKS relay with nonempty account users; Xray access logs cannot reliably attribute abuse to a client", unsupported)}
 	}
 	return Check{"native TUIC attribution", true, "no un-attributable local native TUIC relay found"}
+}
+
+func inspectKernelAmneziaWG(inbounds []panel.Inbound) Check {
+	var unsupported, invalid []string
+	for _, inbound := range inbounds {
+		if !inbound.Enable || inbound.NodeID != nil || !strings.EqualFold(inbound.Protocol, "amneziawg") {
+			continue
+		}
+		var settings struct {
+			Server *struct {
+				KernelMode bool `json:"kernelMode"`
+			} `json:"server"`
+		}
+		if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil || settings.Server == nil {
+			invalid = append(invalid, inbound.Tag)
+			continue
+		}
+		if settings.Server.KernelMode {
+			unsupported = append(unsupported, inbound.Tag)
+		}
+	}
+	if len(unsupported) > 0 || len(invalid) > 0 {
+		return Check{"kernel AmneziaWG protection", false, fmt.Sprintf("kernel-mode local AmneziaWG inbounds %v bypass Xray access logs and abuse rules; disable kernel mode for guard protection; cannot inspect settings for %v", unsupported, invalid)}
+	}
+	return Check{"kernel AmneziaWG protection", true, "no enabled local kernel-mode AmneziaWG inbound found; remote inbounds require doctor on their node"}
 }
 
 func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
@@ -126,7 +166,7 @@ func inspectXrayConfig(xrayConfig map[string]any, cfg config.Config) []Check {
 	routing, _ := xrayConfig["routing"].(map[string]any)
 	routingScript, _ := routing["script"].(string)
 	if routingScript != "" {
-		message := "routing.script is active; Xray bypasses static routing.rules, so the guard cannot verify abuse routing"
+		message := "routing.script is active; incompatible with 3x-ui 3.11 static rules and unverifiable on older/custom cores"
 		checks = append(checks, Check{"routing " + cfg.Xray.TorrentTag, false, message})
 		checks = append(checks, Check{"routing " + cfg.Xray.BlockedTag, false, message})
 		checks = append(checks, Check{"routing AmneziaWG", false, message})

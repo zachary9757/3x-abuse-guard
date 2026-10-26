@@ -1,6 +1,6 @@
 package app
 
-const XrayPolicySnippet = `3x-ui 3.10.2 (Xray-core v26.10.10) disables the Xray access log by default.
+const XrayPolicySnippet = `3x-ui 3.11.0 (Xray-core v26.10.21) disables the Xray access log by default.
 Enable it with filename access.log and make sure the host-visible path matches:
 
 {
@@ -26,7 +26,7 @@ Add TORRENT if it is not already present. 3x-ui already provides blocked:
   "settings": {}
 }
 
-3x-ui 3.10.2 includes a geoip:private block in direct.settings.finalRules.
+3x-ui 3.11.0 includes a geoip:private block in direct.settings.finalRules.
 Keep that defense-in-depth rule. It does not replace the explicit blocked
 routing rules below because it does not produce the blocked outbound tag.
 
@@ -38,9 +38,10 @@ routing rules below because it does not produce the blocked outbound tag.
   ]
 }
 
-Keep routing.script empty: Xray uses the Lua script instead of the static rules
-when that field is set, and doctor fails closed because it cannot verify
-arbitrary Lua. Keep the internal api -> api rule first. Replace 3x-ui's existing
+Keep routing.script empty: 3x-ui 3.11.0 refuses scripts beside its mandatory api
+rule and drops incompatible legacy scripts from generated config. Doctor still
+fails closed on nonempty scripts for older/custom deployments. Keep the internal
+api -> api rule first. Replace 3x-ui's existing
 bittorrent -> blocked rule with bittorrent -> TORRENT, or put this rule
 before it. Keep all abuse rules before normal direct/proxy rules:
 
@@ -74,7 +75,7 @@ For each user-facing inbound, enable sniffing:
   "routeOnly": true
 }
 
-Native AmneziaWG uses an internal loopback SOCKS5 relay. Keep 127.0.0.1 and
+Embedded AmneziaWG uses an internal loopback SOCKS5 relay. Keep 127.0.0.1 and
 ::1 in firewall.bypass_ips: matching events with a client email are still
 scored and can disable the client, but the loopback relay must not be blocked.
 Per-client AmneziaWG IPv6 egress can prepend amneziawg-v6-* routes ahead of
@@ -82,7 +83,12 @@ these abuse rules. Resolve any routing AmneziaWG failure from doctor in the
 panel before relying on this policy. Doctor also checks Xray runtime errors;
 generated config alone does not prove the running core applied it.
 
-Native TUIC in 3x-ui 3.10.2 still uses a noauth loopback SOCKS5 relay. Doctor reports
-this as un-attributable because Xray access logs cannot reliably identify the
-TUIC client. Do not block the loopback relay or treat it as a real source IP.
+Kernel AmneziaWG bypasses Xray access logs and abuse rules. Doctor fails for
+enabled local kernel-mode inbounds or unreadable AmneziaWG settings. Disable
+kernel mode for guard protection. Run doctor on each actual node as well.
+
+Native TUIC in 3x-ui 3.11.0 uses a password-authenticated loopback SOCKS5 relay
+with client emails as account users. Doctor requires that authenticated relay;
+older noauth relays still fail. Verify email attribution in real access logs.
+Do not block the loopback relay or treat it as a real source IP.
 `

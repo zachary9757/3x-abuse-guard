@@ -13,16 +13,16 @@ Xray access log
 
 ## 适用版本与边界
 
-当前代码已按 [3x-ui `v3.10.2`](https://github.com/MHSanaei/3x-ui/releases/tag/v3.10.2) 及其内置 Xray-core `v26.10.10` 的源码和接口核对，并通过本项目单元测试；实际部署仍需执行下方健康检查：
+当前代码已按 [3x-ui `v3.11.0`](https://github.com/MHSanaei/3x-ui/releases/tag/v3.11.0) 及其内置 Xray-core `v26.10.21` 的源码和接口核对，并通过本项目单元测试；实际部署仍需执行下方健康检查：
 
 - 支持 Bearer Token 和面板账号密码登录。
 - 3x-ui 3.7.0 起的 Token 必须使用 `admin` scope；`monitor` 和 `node-sync` 权限不足。
 - 禁用客户端优先使用 `/panel/api/clients/bulkDisable`，旧版接口不可用时自动回退。
 - 支持 Xray access log 中的 `>>`、`->` 和 `==>` 路由分隔符。
-- Native AmneziaWG 经本机 SOCKS5 relay 进入 Xray：带 email 的事件仍可计分和禁用客户端，但不会封禁回环来源 IP。
-- 3x-ui 3.10.2 的本机 Native TUIC 仍使用无认证回环 SOCKS5 relay，Xray access log 无法可靠提供客户端身份；`doctor` 会将该入站报告为不受完整保护。
+- Embedded AmneziaWG 经本机 SOCKS5 relay 进入 Xray：带 email 的事件仍可计分和禁用客户端，但不会封禁回环来源 IP。Kernel AmneziaWG 绕过 Xray 日志和路由，不受本项目保护；`doctor` 会明确报错。
+- 3x-ui 3.11.0 的 Native TUIC 使用带客户端 email 的认证回环 SOCKS5 relay；`doctor` 检查 relay 的协议、监听地址、认证和账户身份，旧版无认证 relay 仍报错。
 - `doctor` 会检查 Xray 运行状态和面板报告的配置错误，将带客户端认证的回环 relay 纳入 sniffing 检查，并识别 AmneziaWG 每客户端 IPv6 出口对后续防滥用规则的遮挡。
-- Xray-core v26.10.10 的 `routing.script` 会接管路由；检测到 Lua 路由时，`doctor` 会拒绝把静态防滥用规则报告为有效。
+- 3x-ui 3.11.0 会拒绝与内部 API 路由共存的 `routing.script`，并从生成配置中移除遗留的不兼容脚本；`doctor` 保留非空脚本的失败关闭检查，兼容旧版及非标准部署。
 
 本项目不会直接修改 `/etc/x-ui/x-ui.db`，也不会自动改写全局 Xray 配置。升级 3x-ui 或 Xray 后，应重新执行 `doctor` 并检查路由。更多兼容性说明见 [docs/3x-ui-xray.md](docs/3x-ui-xray.md)。
 
@@ -43,7 +43,7 @@ Xray access log
 
 ### 使用 API Token
 
-3x-ui 3.10.2 请创建 `admin` scope Token。Token 明文只在创建时显示一次；再次运行 `x-ui setting -getApiToken` 会轮换 `cli-fallback` Token，并立即使旧值失效。
+3x-ui 3.11.0 请创建 `admin` scope Token。Token 明文只在创建时显示一次；再次运行 `x-ui setting -getApiToken` 会轮换 `cli-fallback` Token，并立即使旧值失效。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scripts/install.sh | sudo bash -s -- \
@@ -235,7 +235,7 @@ curl -fsSL https://raw.githubusercontent.com/zachary9757/3x-abuse-guard/main/scr
 
 注意：
 
-- 保持 `routing.script` 为空。本项目验证的是静态 `routing.rules`；Lua 路由启用后 Xray 会由脚本决定出站，`doctor` 将失败关闭。
+- 保持 `routing.script` 为空。本项目验证静态 `routing.rules`；3.11.0 会拒绝或移除与内部 API 规则冲突的脚本，`doctor` 对仍出现的非空脚本失败关闭。
 - 保留 3x-ui `direct.settings.finalRules` 中的 `geoip:private` 阻断；它是额外保护，不能替代显式的 `blocked` 路由。
 - UDP 规则会阻断 NTP `123`、SNMP `161`、CLDAP `389`、mDNS `5353` 等服务。如果用户确实需要这些协议，应删除对应端口。
 - 不要直接屏蔽 UDP/TCP `53`，否则可能影响普通 DNS。
@@ -282,15 +282,15 @@ BT                         -> TORRENT
 
 `doctor` 会检查 access log、面板 API、Xray 运行状态和版本、Native TUIC 客户端归属、`TORRENT`/`blocked`、BT 路由顺序、AmneziaWG IPv6 出口遮挡，以及用户入站（含带认证客户端的回环 SOCKS/mixed relay）的 sniffing。状态接口不可用或缺少 Xray 状态时也会报错，不会假定运行正常。
 
-3x-ui 3.10.2 会拒绝导致 Xray 无法启动的配置。`getConfigJson` 返回生成配置，不是运行配置快照；若 `doctor` 的 `xray runtime` 报告 `config refused`，请先解决面板报告的错误并重新应用配置。检查通过仅说明配置检查通过且面板未报告运行错误，不证明每条规则已经被真实流量命中；`CN_BLOCKED`、UDP 规则及具体客户端的路由结果仍需通过 access/error log 实测。
+3x-ui 3.11.0 会拒绝导致 Xray 无法启动的配置。`getConfigJson` 返回生成配置，不是运行配置快照；若 `doctor` 的 `xray runtime` 报告 `config refused`，请先解决面板报告的错误并重新应用配置。检查通过仅说明配置检查通过且面板未报告运行错误，不证明每条规则已经被真实流量命中；`CN_BLOCKED`、UDP 规则及具体客户端的路由结果仍需通过 access/error log 实测。
 
-### 3x-ui 3.10.2 升级边界
+### 3x-ui 3.11.0 升级边界
 
 - 自动化客户端变更必须使用 `/panel/api/clients/*`；`/panel/api/inbounds/update` 不再修改客户端成员、启用状态、到期时间、流量额度或续订。本项目已经使用客户端专用接口。
-- master 应升级到 3x-ui 3.10.2，以获得中央节点流量合并、多入站 flow 和 WireGuard/AmneziaWG 字段归属修复；所有节点也应保持同版本，避免混用时的行为差异。MASQUE 支持自 3.10.0 引入，更旧节点会拒绝该入站。
-- 3.10.2 会尽量原地应用多用户 Shadowsocks 客户端修改，但不应由此假定本项目的每次 `bulkDisable` 都不会重启 Xray；仍需保留下方的面板重启设置边界并在部署后验证。
-- 3.10.2 的完整 Xray 崩溃报告来自核心进程 stdout/stderr，不替代本项目依赖的 Xray access log。
-- 使用 XDNS 或 port hopping 的客户端应升级到基于 Xray-core v26.10.10 或更高版本的构建。
+- master 和所有节点应保持 3x-ui 3.11.0；该版修复节点客户端禁用状态同步，并复用 Xray gRPC 连接以改善批量操作性能。禁用后仍需验证实际节点的状态收敛。
+- Native TUIC 客户端增删支持热应用；不能由此假定所有协议的每次 `bulkDisable` 都不会重启 Xray，仍需验证面板重启设置与既有连接行为。
+- 核心进程 stdout/stderr 的完整崩溃报告不替代本项目依赖的 Xray access log。
+- 使用 XDNS 或 port hopping 的客户端应升级到基于 Xray-core v26.10.21 或更高版本的构建。
 - 私有 CA 签发的出站 TLS 必须在 3x-ui 中启用 **Use system CA**。
 - systemd 安装现在会沙箱化 x-ui。使用自定义 `XUI_LOG_FOLDER` 时，应确认生成的 `ReadWritePaths` 包含日志目录，且 `3x-abuse-guard` 能读取宿主机上的 access log。
 - 不要启用 `routing.script`；本项目不解释 Lua 路由，启用后 `doctor` 会将静态路由检查标记为失败。
@@ -298,9 +298,13 @@ BT                         -> TORRENT
 
 ### Native TUIC 的客户端归属
 
-3x-ui 3.10.2 的本机 Native TUIC 将解密后的流量转发到监听 `127.0.0.1` 的 Xray SOCKS5 relay。该 relay 仍使用 `noauth`，所以 Xray access log 不能可靠地把事件归属到 TUIC 客户端邮箱；同时回环地址必须继续保留在 `firewall.bypass_ips`，不能通过封禁 `127.0.0.1` 处理。
+3x-ui 3.11.0 的本机 Native TUIC 将解密后的流量转发到监听 `127.0.0.1` 的认证 Xray SOCKS5 relay，账户用户名为客户端 email。匹配事件可按 email 计分和禁用客户端；来源仍为回环地址，必须保留在 `firewall.bypass_ips`，不能通过封禁 `127.0.0.1` 处理。升级后应使用脱敏 access log 样本验证 email 归属。
 
-检测到这种入站时，`doctor` 的 `native TUIC attribution` 会失败。本项目仍可检查生成的 Xray 路由，但不会声称能针对该 TUIC 客户端计分或禁用。只有上游 relay 保留客户端认证身份，或提供稳定的结构化审计事件后，才能安全扩展这一能力。
+`doctor` 的 `native TUIC attribution` 要求对应 SOCKS relay 监听回环地址、使用 `password` 且所有账户具有非空用户名。旧版 `noauth`、缺少账户或找不到 relay 时仍失败关闭。
+
+### Kernel AmneziaWG 的保护边界
+
+3.11.0 的 `settings.server.kernelMode=true` 使用 NAT-only 内核路径，不经过 Xray，无法使用本项目的 access log 检测、计分和防滥用路由。`doctor` 的 `kernel AmneziaWG protection` 会对启用的本机 kernel 入站报错，无法解析 AmneziaWG 设置时也报错；禁用 kernel mode、改用 embedded 路径后重新检查。远端入站需要在实际承载节点执行 `doctor`，master 的结果不能证明节点受保护。
 
 ### Native AmneziaWG 的每客户端 IPv6 出口
 
@@ -310,7 +314,7 @@ BT                         -> TORRENT
 
 ### 禁用客户端与 Xray 重启
 
-3x-ui 3.10.2 的 **Restart Xray After Client Disable** 设置也作用于本项目调用的批量禁用接口。开启时，禁用客户端可能触发整个 Xray 重启，影响同一核心上的其他连接；关闭时，移除客户端凭据通常只阻止新连接，既有连接可能继续，来源 IP 封禁的效果还取决于是否能取得真实来源地址。Shadowsocks 热更新降低了部分客户端修改的中断，但不改变这些安全边界。
+3x-ui 3.11.0 的 **Restart Xray After Client Disable** 设置也作用于本项目调用的批量禁用接口。开启时，禁用客户端可能触发整个 Xray 重启，影响同一核心上的其他连接；关闭时，移除客户端凭据通常只阻止新连接，既有连接可能继续，来源 IP 封禁的效果还取决于是否能取得真实来源地址。Shadowsocks 热更新降低了部分客户端修改的中断，但不改变这些安全边界。
 
 是否开启应在 3x-ui 的 Xray 设置中明确选择；本项目不覆盖面板的重启设置。
 
