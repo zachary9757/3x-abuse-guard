@@ -64,11 +64,11 @@ type XrayStatus struct {
 }
 
 type Inbound struct {
-	Enable   bool   `json:"enable"`
-	Protocol string `json:"protocol"`
-	Tag      string `json:"tag"`
-	NodeID   *int   `json:"nodeId"`
-	Settings string `json:"settings"`
+	Enable   bool            `json:"enable"`
+	Protocol string          `json:"protocol"`
+	Tag      string          `json:"tag"`
+	NodeID   *int            `json:"nodeId"`
+	Settings json.RawMessage `json:"settings"`
 }
 
 type bulkSetEnableResult struct {

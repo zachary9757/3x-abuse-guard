@@ -143,7 +143,12 @@ func inspectKernelAmneziaWG(inbounds []panel.Inbound) Check {
 				KernelMode bool `json:"kernelMode"`
 			} `json:"server"`
 		}
-		if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil || settings.Server == nil {
+		raw := inbound.Settings
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err == nil {
+			raw = []byte(encoded)
+		}
+		if err := json.Unmarshal(raw, &settings); err != nil || settings.Server == nil {
 			invalid = append(invalid, inbound.Tag)
 			continue
 		}

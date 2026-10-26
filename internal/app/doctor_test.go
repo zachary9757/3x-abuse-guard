@@ -360,6 +360,9 @@ func TestKernelAmneziaWGProtection(t *testing.T) {
 		{"embedded legacy", `{"server":{}}`, true, nil, true},
 		{"embedded explicit", `{"server":{"kernelMode":false}}`, true, nil, true},
 		{"kernel", `{"server":{"kernelMode":true}}`, true, nil, false},
+		{"string embedded", `"{\"server\":{\"kernelMode\":false}}"`, true, nil, true},
+		{"string kernel", `"{\"server\":{\"kernelMode\":true}}"`, true, nil, false},
+		{"string malformed", `"{"`, true, nil, false},
 		{"disabled kernel", `{"server":{"kernelMode":true}}`, false, nil, true},
 		{"remote kernel", `{"server":{"kernelMode":true}}`, true, &nodeID, true},
 		{"missing", "", true, nil, false},
@@ -370,7 +373,7 @@ func TestKernelAmneziaWGProtection(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			check := inspectKernelAmneziaWG([]panel.Inbound{
-				{Enable: tc.enabled, Protocol: "amneziawg", Tag: "awg-1", NodeID: tc.nodeID, Settings: tc.settings},
+				{Enable: tc.enabled, Protocol: "amneziawg", Tag: "awg-1", NodeID: tc.nodeID, Settings: json.RawMessage(tc.settings)},
 				{Enable: true, Protocol: "vless", Tag: "normal-1"},
 			})
 			if check.OK != tc.wantOK || (!check.OK && !strings.Contains(check.Message, "awg-1")) {
@@ -397,7 +400,7 @@ func TestDoctorRejectsKernelAmneziaWGWithHealthyXray(t *testing.T) {
 			x["log"] = map[string]any{"access": cfg.Xray.AccessLog}
 			obj = x
 		case "/panel/api/inbounds/list":
-			obj = []panel.Inbound{{Enable: true, Protocol: "amneziawg", Tag: "kernel-1", Settings: `{"server":{"kernelMode":true}}`}}
+			obj = []panel.Inbound{{Enable: true, Protocol: "amneziawg", Tag: "kernel-1", Settings: json.RawMessage(`{"server":{"kernelMode":true}}`)}}
 		case "/panel/api/server/status":
 			obj = map[string]any{"xray": map[string]any{"state": "running", "version": "26.10.21"}}
 		default:

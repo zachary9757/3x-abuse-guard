@@ -244,7 +244,7 @@ func TestGetInbounds(t *testing.T) {
 	if len(inbounds) != 1 || inbounds[0].Tag != "tuic-1" || inbounds[0].NodeID != nil {
 		t.Fatalf("unexpected inbounds: %#v", inbounds)
 	}
-	if inbounds[0].Settings != `{"server":{"kernelMode":true}}` {
+	if string(inbounds[0].Settings) != `"{\"server\":{\"kernelMode\":true}}"` {
 		t.Fatalf("settings lost: %q", inbounds[0].Settings)
 	}
 }
