@@ -127,6 +127,64 @@ func TestTorrentBlocksAndDisablesAfterThreshold(t *testing.T) {
 	}
 }
 
+func TestQueuedNotificationsDoNotDelayTorrentEnforcement(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fw := &firewall.Noop{}
+	panel := &fakePanel{}
+	notifier := &blockedNotifier{started: make(chan struct{}, 1)}
+	engine := NewEngine(Config{TorrentBlockOnFirstHit: true, TorrentDisableAfter: 1}, store, fw, panel, notifier, nil)
+	// Keep room for only one waiting message, so the test also exercises a full queue.
+	queue := notify.NewQueue(notifier, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		queue.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	queue.Deliver(notify.Event{Action: "previous alert"}, func(error) {})
+	select {
+	case <-notifier.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("notification worker did not start")
+	}
+
+	ev := logwatch.Event{Kind: logwatch.KindTorrent, SourceIP: "198.51.100.10", Email: "alice", Outbound: "TORRENT"}
+	handled := make(chan error, 1)
+	go func() { handled <- engine.HandleWithDelivery(ctx, ev, queue.Deliver) }()
+	select {
+	case err := <-handled:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("enforcement waited for notification delivery")
+	}
+	if len(fw.Blocked) != 1 || fw.Blocked[0] != ev.SourceIP || len(panel.disabled) != 1 || panel.disabled[0] != ev.Email {
+		t.Fatalf("blocked = %v, disabled = %v", fw.Blocked, panel.disabled)
+	}
+}
+
+type blockedNotifier struct {
+	started chan struct{}
+}
+
+func (n *blockedNotifier) Notify(ctx context.Context, _ notify.Event) error {
+	select {
+	case n.started <- struct{}{}:
+	case <-ctx.Done():
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func TestBanStateFailureKeepsFirewallFailClosed(t *testing.T) {
 	fw := &rollbackRecordingFirewall{}
 	engine := NewEngine(Config{
@@ -389,6 +447,7 @@ func TestScoreThresholdNotificationIncludesContext(t *testing.T) {
 		SourceIP: "198.51.100.10",
 		Email:    "alice",
 		Target:   "example.com:22",
+		Network:  "tcp",
 		Inbound:  "inbound-1",
 		Outbound: "blocked",
 	}); err != nil {
@@ -406,6 +465,9 @@ func TestScoreThresholdNotificationIncludesContext(t *testing.T) {
 	}
 	if got.Email != "alice" || got.IP != "198.51.100.10" || got.Target != "example.com:22" {
 		t.Fatalf("event actor context = email:%s ip:%s target:%s", got.Email, got.IP, got.Target)
+	}
+	if got.Network != "tcp" || got.TargetPort != 22 {
+		t.Fatalf("event target = %s/%d", got.Network, got.TargetPort)
 	}
 	if got.Inbound != "inbound-1" || got.Outbound != "blocked" {
 		t.Fatalf("event route context = inbound:%s outbound:%s", got.Inbound, got.Outbound)

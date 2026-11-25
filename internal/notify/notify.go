@@ -7,23 +7,27 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Event struct {
-	Action    string    `json:"action"`
-	Kind      string    `json:"kind"`
-	Email     string    `json:"email,omitempty"`
-	IP        string    `json:"ip,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	Profile   string    `json:"profile,omitempty"`
-	Score     int       `json:"score,omitempty"`
-	Threshold int       `json:"threshold,omitempty"`
-	Target    string    `json:"target,omitempty"`
-	Inbound   string    `json:"inbound,omitempty"`
-	Outbound  string    `json:"outbound,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	Action     string    `json:"action"`
+	Kind       string    `json:"kind"`
+	Email      string    `json:"email,omitempty"`
+	IP         string    `json:"ip,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	Profile    string    `json:"profile,omitempty"`
+	Score      int       `json:"score,omitempty"`
+	Threshold  int       `json:"threshold,omitempty"`
+	Target     string    `json:"target,omitempty"`
+	TargetPort int       `json:"target_port,omitempty"`
+	Network    string    `json:"network,omitempty"`
+	Inbound    string    `json:"inbound,omitempty"`
+	Outbound   string    `json:"outbound,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 type Notifier interface {
@@ -182,7 +186,7 @@ func (t *Telegram) Notify(ctx context.Context, event Event) error {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
-	return t.sendText(ctx, formatTelegramText(event))
+	return t.NotifyText(ctx, formatTelegramText(event))
 }
 
 func (t *Telegram) NotifyText(ctx context.Context, text string) error {
@@ -214,19 +218,30 @@ func (t *Telegram) sendText(ctx context.Context, text string) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/bot"+t.Token+"/sendMessage", bytes.NewReader(data))
 	if err != nil {
-		return err
+		return fmt.Errorf("telegram request could not be created: %s", t.redactToken(err.Error()))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		// net/http includes the full request URL in transport errors.
+		if requestErr, ok := err.(*url.Error); ok {
+			err = requestErr.Err
+		}
+		return fmt.Errorf("telegram request failed: %s", t.redactToken(err.Error()))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("telegram api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("telegram api returned status %d: %s", resp.StatusCode, t.redactToken(strings.TrimSpace(string(data))))
 	}
 	return nil
+}
+
+func (t *Telegram) redactToken(message string) string {
+	if t.Token == "" {
+		return message
+	}
+	return strings.NewReplacer(t.Token, "[redacted]", url.QueryEscape(t.Token), "[redacted]").Replace(message)
 }
 
 func splitTelegramText(text string, limit int) []string {
@@ -247,8 +262,15 @@ func splitTelegramText(text string, limit int) []string {
 				current.Reset()
 			}
 			for len(line) > limit {
-				chunks = append(chunks, line[:limit])
-				line = line[limit:]
+				end := limit
+				for end > 0 && !utf8.RuneStart(line[end]) {
+					end--
+				}
+				if end == 0 {
+					_, end = utf8.DecodeRuneInString(line)
+				}
+				chunks = append(chunks, line[:end])
+				line = line[end:]
 			}
 		}
 		if current.Len() > 0 && current.Len()+1+len(line) > limit {
@@ -291,6 +313,13 @@ func formatTelegramText(event Event) string {
 	}
 	if event.Target != "" {
 		lines = append(lines, "目标: "+event.Target)
+	}
+	if event.TargetPort > 0 {
+		port := fmt.Sprint(event.TargetPort)
+		if event.Network != "" {
+			port = event.Network + "/" + port
+		}
+		lines = append(lines, "目标端口: "+port)
 	}
 	if event.Inbound != "" {
 		lines = append(lines, "入站: "+event.Inbound)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestActivityStatsDailyReport(t *testing.T) {
-	stats := newActivityStats()
+	stats := newActivityStats("TORRENT", "blocked")
 	day := time.Date(2026, 7, 4, 0, 0, 0, 0, reportLocation)
 
 	stats.Record(logwatch.Event{
@@ -54,21 +55,22 @@ func TestActivityStatsDailyReport(t *testing.T) {
 		Kind:     logwatch.KindNormal,
 	})
 
-	report, ok := stats.DailyReport(day)
+	report, ok := pendingActivityReport(stats, day)
 	if !ok {
 		t.Fatal("expected report")
 	}
 	for _, want := range []string{
-		"3x-abuse-guard 每日上网行为统计",
+		"3x-abuse-guard 每日代理请求统计",
 		"日期: 2026-07-04",
 		"(北京时间)",
 		"客户端数: 2",
-		"总连接: 3",
+		"总请求: 3",
+		"出站命中: TORRENT(0), blocked(1), CN_BLOCKED(0), shared-direct(0), direct(2)",
 		"1. alice",
-		"连接: 2",
+		"请求: 2",
 		"访问目标Top: example.com:443(2)",
 		"2. ip:198.51.100.20",
-		"出站: blocked(1)",
+		"出站命中: blocked(1)",
 		"类型: blocked(1)",
 	} {
 		if !strings.Contains(report, want) {
@@ -80,8 +82,25 @@ func TestActivityStatsDailyReport(t *testing.T) {
 	}
 }
 
+func TestActivityReportCountsAllOutbounds(t *testing.T) {
+	stats := newActivityStats("bt-denied", "risk-denied")
+	day := time.Date(2026, 7, 4, 0, 0, 0, 0, reportLocation)
+	for _, tag := range []string{"shared-direct", "CN_BLOCKED", "direct", "shared-direct", "risk-denied", "bt-denied", "relay"} {
+		stats.Record(logwatch.Event{Time: day, Email: "alice", Outbound: tag})
+	}
+	report, _ := pendingActivityReport(stats, day)
+	for _, want := range []string{
+		"总请求: 7",
+		"出站命中: bt-denied(1), risk-denied(1), CN_BLOCKED(1), shared-direct(2), direct(1), relay(1)",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
 func TestSendDailyAccessReportDeletesDayAfterNotify(t *testing.T) {
-	stats := newActivityStats()
+	stats := newActivityStats("TORRENT", "blocked")
 	day := time.Date(2026, 7, 4, 0, 0, 0, 0, reportLocation)
 	stats.Record(logwatch.Event{
 		Time:     day.Add(time.Hour),
@@ -102,13 +121,48 @@ func TestSendDailyAccessReportDeletesDayAfterNotify(t *testing.T) {
 	if !strings.Contains(notifier.text, "alice") {
 		t.Fatalf("text = %q", notifier.text)
 	}
-	if _, ok := stats.DailyReport(day); ok {
+	if _, ok := pendingActivityReport(stats, day); ok {
 		t.Fatal("expected reported day to be deleted")
 	}
 }
 
+func TestSendDailyAccessReportPreservesRequestsRecordedDuringSend(t *testing.T) {
+	sendErr := errors.New("temporary send failure")
+	for _, tc := range []struct {
+		name   string
+		err    error
+		starts string
+		total  string
+	}{
+		{name: "success", starts: "02:00:00", total: "总请求: 2"},
+		{name: "failure", err: sendErr, starts: "01:00:00", total: "总请求: 3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := newActivityStats("TORRENT", "blocked")
+			day := time.Date(2026, 7, 4, 0, 0, 0, 0, reportLocation)
+			stats.Record(logwatch.Event{Time: day.Add(time.Hour), Email: "alice", Outbound: "direct"})
+			notifier := &captureTextNotifier{onSend: func() error {
+				stats.Record(logwatch.Event{Time: day.Add(2 * time.Hour), Email: "alice", Outbound: "shared-direct"})
+				stats.Record(logwatch.Event{Time: day.Add(3 * time.Hour), Email: "bob", Outbound: "CN_BLOCKED"})
+				return tc.err
+			}}
+			app := &App{activity: stats, notifier: notifier}
+			if err := app.sendDailyAccessReport(context.Background(), day); !errors.Is(err, tc.err) {
+				t.Fatalf("sendDailyAccessReport error = %v, want %v", err, tc.err)
+			}
+			if !strings.Contains(notifier.text, "总请求: 1") {
+				t.Fatalf("sent report:\n%s", notifier.text)
+			}
+			report, ok := pendingActivityReport(stats, day)
+			if !ok || !strings.Contains(report, tc.total) || !strings.Contains(report, "活跃: "+tc.starts+" - 02:00:00") || !strings.Contains(report, "bob") {
+				t.Fatalf("pending report:\n%s", report)
+			}
+		})
+	}
+}
+
 func TestSendPendingAccessReportsLeavesFutureDay(t *testing.T) {
-	stats := newActivityStats()
+	stats := newActivityStats("TORRENT", "blocked")
 	day := time.Date(2026, 7, 4, 0, 0, 0, 0, reportLocation)
 	nextDay := day.AddDate(0, 0, 1)
 	stats.Record(logwatch.Event{
@@ -140,16 +194,16 @@ func TestSendPendingAccessReportsLeavesFutureDay(t *testing.T) {
 	if notifier.calls != 1 {
 		t.Fatalf("calls = %d", notifier.calls)
 	}
-	if _, ok := stats.DailyReport(day); ok {
+	if _, ok := pendingActivityReport(stats, day); ok {
 		t.Fatal("expected sent day to be deleted")
 	}
-	if report, ok := stats.DailyReport(nextDay); !ok || !strings.Contains(report, "bob") {
+	if report, ok := pendingActivityReport(stats, nextDay); !ok || !strings.Contains(report, "bob") {
 		t.Fatalf("expected future day to remain, report=%q ok=%v", report, ok)
 	}
 }
 
 func TestActivityStatsGroupsUTCEventsByBeijingDay(t *testing.T) {
-	stats := newActivityStats()
+	stats := newActivityStats("TORRENT", "blocked")
 	eventTime := time.Date(2026, 7, 3, 16, 30, 0, 0, time.UTC)
 	beijingDay := time.Date(2026, 7, 4, 0, 0, 0, 0, reportLocation)
 	stats.Record(logwatch.Event{
@@ -163,7 +217,7 @@ func TestActivityStatsGroupsUTCEventsByBeijingDay(t *testing.T) {
 		Kind:     logwatch.KindNormal,
 	})
 
-	report, ok := stats.DailyReport(beijingDay)
+	report, ok := pendingActivityReport(stats, beijingDay)
 	if !ok {
 		t.Fatal("expected Beijing-day report")
 	}
@@ -192,8 +246,9 @@ func TestNextMidnightAfterUsesBeijingTime(t *testing.T) {
 }
 
 type captureTextNotifier struct {
-	text  string
-	calls int
+	text   string
+	calls  int
+	onSend func() error
 }
 
 func (n *captureTextNotifier) Notify(context.Context, notify.Event) error {
@@ -203,5 +258,17 @@ func (n *captureTextNotifier) Notify(context.Context, notify.Event) error {
 func (n *captureTextNotifier) NotifyText(_ context.Context, text string) error {
 	n.text = text
 	n.calls++
+	if n.onSend != nil {
+		return n.onSend()
+	}
 	return nil
+}
+
+func pendingActivityReport(stats *activityStats, day time.Time) (string, bool) {
+	key := dayKey(day)
+	clients := stats.days[key]
+	if len(clients) == 0 {
+		return "", false
+	}
+	return formatActivityReport(key, clients, stats.outboundTags), true
 }

@@ -3,11 +3,15 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestTelegramNotifySendsMessage(t *testing.T) {
@@ -34,18 +38,20 @@ func TestTelegramNotifySendsMessage(t *testing.T) {
 		Client:     server.Client(),
 	}
 	err := notifier.Notify(context.Background(), Event{
-		Action:    "score_threshold",
-		Kind:      "blocked",
-		Email:     "alice",
-		IP:        "198.51.100.10",
-		Reason:    "blocked outbound hit",
-		Profile:   "default",
-		Score:     50,
-		Threshold: 50,
-		Target:    "example.com:22",
-		Inbound:   "inbound-1",
-		Outbound:  "blocked",
-		Timestamp: time.Date(2026, 6, 11, 1, 2, 3, 0, time.UTC),
+		Action:     "score_threshold",
+		Kind:       "blocked",
+		Email:      "alice",
+		IP:         "198.51.100.10",
+		Reason:     "blocked outbound hit",
+		Profile:    "default",
+		Score:      50,
+		Threshold:  50,
+		Target:     "example.com:22",
+		TargetPort: 22,
+		Network:    "tcp",
+		Inbound:    "inbound-1",
+		Outbound:   "blocked",
+		Timestamp:  time.Date(2026, 6, 11, 1, 2, 3, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,6 +71,7 @@ func TestTelegramNotifySendsMessage(t *testing.T) {
 		"累计分数: 50 / 50",
 		"策略: default",
 		"目标: example.com:22",
+		"目标端口: tcp/22",
 		"入站: inbound-1",
 		"出站: blocked",
 		"说明: 命中 blocked 高风险出站规则",
@@ -140,6 +147,43 @@ func TestTelegramNotifyReturnsStatusError(t *testing.T) {
 	}
 }
 
+func TestTelegramErrorsRedactToken(t *testing.T) {
+	const token = "123456:test-only-secret"
+	for _, tc := range []struct {
+		name         string
+		base         string
+		response     *http.Response
+		transportErr error
+		want         string
+	}{
+		{name: "invalid URL", base: "https://[", want: "could not be created"},
+		{name: "network error", transportErr: errors.New("dial failed for " + url.QueryEscape(token)), want: "dial failed"},
+		{name: "API error", response: &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader("bad chat for " + token))}, want: "bad chat for"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			notifier := &Telegram{
+				Token: token, ChatID: "12345", APIBaseURL: tc.base,
+				Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return tc.response, tc.transportErr
+				})},
+			}
+			err := notifier.NotifyText(context.Background(), "test")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q", tc.want)
+			}
+			for _, form := range []string{token, url.QueryEscape(token)} {
+				if strings.Contains(err.Error(), form) {
+					t.Fatal("error exposes the bot token")
+				}
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
 func TestTelegramNotifyTextSendsPlainMessage(t *testing.T) {
 	var got struct {
 		ChatID string `json:"chat_id"`
@@ -195,5 +239,18 @@ func TestTelegramNotifyTextSplitsLongMessage(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("calls = %d", calls)
+	}
+}
+
+func TestSplitTelegramTextKeepsUTF8Intact(t *testing.T) {
+	text := "ab" + strings.Repeat("中", 1301)
+	chunks := splitTelegramText(text, 3900)
+	if len(chunks) != 2 || strings.Join(chunks, "") != text {
+		t.Fatal("chunks did not preserve the message")
+	}
+	for _, chunk := range chunks {
+		if len(chunk) > 3900 || !utf8.ValidString(chunk) {
+			t.Fatal("invalid Telegram chunk")
+		}
 	}
 }

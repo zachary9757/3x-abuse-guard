@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/zachary9757/3x-abuse-guard/internal/config"
@@ -54,7 +55,8 @@ func New(cfg config.Config, logger *log.Logger) (*App, error) {
 	notifier := newNotifier(cfg)
 	engine := policy.NewEngine(policyCfg, store, fw, panelClient, notifier, logger)
 
-	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine, notifier: notifier, activity: newActivityStats()}, nil
+	activity := newActivityStats(cfg.Xray.TorrentTag, cfg.Xray.BlockedTag)
+	return &App{Config: cfg, Logger: logger, store: store, fw: fw, engine: engine, notifier: notifier, activity: activity}, nil
 }
 
 func buildPolicyConfig(cfg config.Config) policy.Config {
@@ -237,6 +239,13 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer func() {
+		cancel()
+		workers.Wait()
+	}()
+
 	lines := make(chan string, 100)
 	tailer := logwatch.Tailer{
 		Path:       a.Config.Xray.AccessLog,
@@ -244,14 +253,23 @@ func (a *App) Run(ctx context.Context) error {
 		StartAtEnd: true,
 	}
 	errCh := make(chan error, 1)
+	queue := notify.NewQueue(a.notifier, 256)
+	workers.Add(3)
 	go func() {
+		defer workers.Done()
 		errCh <- tailer.Follow(ctx, lines)
+	}()
+	go func() {
+		defer workers.Done()
+		queue.Run(ctx)
+	}()
+	go func() {
+		defer workers.Done()
+		a.runAccessReports(ctx)
 	}()
 
 	cleanup := time.NewTicker(time.Minute)
 	defer cleanup.Stop()
-	reportTimer := time.NewTimer(timeUntilNextMidnight(time.Now()))
-	defer reportTimer.Stop()
 
 	for {
 		select {
@@ -268,7 +286,7 @@ func (a *App) Run(ctx context.Context) error {
 				continue
 			}
 			a.activity.Record(ev)
-			if err := a.engine.Handle(ctx, ev); err != nil {
+			if err := a.engine.HandleWithDelivery(ctx, ev, queue.Deliver); err != nil {
 				a.Logger.Printf("handle event failed: %v", err)
 			}
 		case <-cleanup.C:
@@ -279,11 +297,6 @@ func (a *App) Run(ctx context.Context) error {
 			if err := a.pruneExpiredEvents(time.Now()); err != nil {
 				a.Logger.Printf("event retention cleanup failed: %v", err)
 			}
-		case now := <-reportTimer.C:
-			if err := a.sendPendingAccessReports(ctx, reportDayFor(now)); err != nil {
-				a.Logger.Printf("daily access report failed: %v", err)
-			}
-			reportTimer.Reset(timeUntilNextMidnight(time.Now()))
 		}
 	}
 }

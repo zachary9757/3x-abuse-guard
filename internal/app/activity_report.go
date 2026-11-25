@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -17,25 +18,32 @@ const activityReportTopN = 5
 var reportLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 type activityStats struct {
-	mu   sync.Mutex
-	days map[string]map[string]*clientActivity
+	mu           sync.Mutex
+	days         map[string]map[string]*clientActivity
+	outboundTags []string
 }
 
 type clientActivity struct {
-	Actor       string
-	Connections int
-	FirstSeen   time.Time
-	LastSeen    time.Time
-	SourceIPs   map[string]int
-	Targets     map[string]int
-	Inbounds    map[string]int
-	Outbounds   map[string]int
-	Kinds       map[string]int
-	Networks    map[string]int
+	Actor     string
+	Requests  int
+	FirstSeen time.Time
+	LastSeen  time.Time
+	SourceIPs map[string]int
+	Targets   map[string]int
+	Inbounds  map[string]int
+	Outbounds map[string]int
+	Kinds     map[string]int
+	Networks  map[string]int
 }
 
-func newActivityStats() *activityStats {
-	return &activityStats{days: map[string]map[string]*clientActivity{}}
+func newActivityStats(torrentTag, blockedTag string) *activityStats {
+	stats := &activityStats{days: map[string]map[string]*clientActivity{}}
+	for _, tag := range []string{torrentTag, blockedTag, "CN_BLOCKED", "shared-direct", "direct"} {
+		if tag != "" && !slices.Contains(stats.outboundTags, tag) {
+			stats.outboundTags = append(stats.outboundTags, tag)
+		}
+	}
+	return stats
 }
 
 func (s *activityStats) Record(ev logwatch.Event) {
@@ -74,7 +82,7 @@ func (s *activityStats) Record(ev logwatch.Event) {
 		s.days[day][actor] = stats
 	}
 
-	stats.Connections++
+	stats.Requests++
 	if stats.FirstSeen.IsZero() || ev.Time.Before(stats.FirstSeen) {
 		stats.FirstSeen = ev.Time
 	}
@@ -89,62 +97,100 @@ func (s *activityStats) Record(ev logwatch.Event) {
 	increment(stats.Networks, ev.Network)
 }
 
-func (s *activityStats) DailyReport(day time.Time) (string, bool) {
-	if s == nil {
-		return "", false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	key := dayKey(day)
-	clients := s.days[key]
-	if len(clients) == 0 {
-		return "", false
-	}
-
+func formatActivityReport(key string, clients map[string]*clientActivity, outboundTags []string) string {
 	rows := make([]*clientActivity, 0, len(clients))
 	total := 0
+	outbounds := map[string]int{}
 	for _, stats := range clients {
 		rows = append(rows, stats)
-		total += stats.Connections
+		total += stats.Requests
+		addCounts(outbounds, stats.Outbounds)
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Connections != rows[j].Connections {
-			return rows[i].Connections > rows[j].Connections
+		if rows[i].Requests != rows[j].Requests {
+			return rows[i].Requests > rows[j].Requests
 		}
 		return rows[i].Actor < rows[j].Actor
 	})
 
 	lines := []string{
-		"3x-abuse-guard 每日上网行为统计",
+		"3x-abuse-guard 每日代理请求统计",
 		"日期: " + key + " (北京时间)",
 		fmt.Sprintf("客户端数: %d", len(rows)),
-		fmt.Sprintf("总连接: %d", total),
+		fmt.Sprintf("总请求: %d", total),
+		"出站命中: " + formatOutboundCounts(outbounds, outboundTags),
 		"",
 	}
 	for i, stats := range rows {
 		lines = append(lines,
 			fmt.Sprintf("%d. %s", i+1, stats.Actor),
-			fmt.Sprintf("连接: %d, 活跃: %s - %s", stats.Connections, clock(stats.FirstSeen), clock(stats.LastSeen)),
+			fmt.Sprintf("请求: %d, 活跃: %s - %s", stats.Requests, clock(stats.FirstSeen), clock(stats.LastSeen)),
 			"来源IP: "+formatTop(stats.SourceIPs, activityReportTopN),
 			"访问目标Top: "+formatTop(stats.Targets, activityReportTopN),
-			"出站: "+formatTop(stats.Outbounds, activityReportTopN),
+			"出站命中: "+formatTop(stats.Outbounds, 0),
 			"入站: "+formatTop(stats.Inbounds, activityReportTopN),
 			"类型: "+formatTop(stats.Kinds, activityReportTopN),
 			"协议: "+formatTop(stats.Networks, activityReportTopN),
 			"",
 		)
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n")), true
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func (s *activityStats) DeleteDay(day time.Time) {
-	if s == nil {
-		return
+func formatOutboundCounts(counts map[string]int, outboundTags []string) string {
+	items := make([]string, 0, len(outboundTags)+1)
+	for _, tag := range outboundTags {
+		items = append(items, fmt.Sprintf("%s(%d)", tag, counts[tag]))
+		delete(counts, tag)
 	}
+	if len(counts) != 0 {
+		items = append(items, formatTop(counts, 0))
+	}
+	return strings.Join(items, ", ")
+}
+
+func (s *activityStats) takeDay(key string) map[string]*clientActivity {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.days, dayKey(day))
+	clients := s.days[key]
+	delete(s.days, key)
+	return clients
+}
+
+// Restore a failed report without losing requests recorded while the send was in flight.
+func (s *activityStats) restoreDay(key string, clients map[string]*clientActivity) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for actor, recent := range s.days[key] {
+		if previous := clients[actor]; previous != nil {
+			previous.merge(recent)
+		} else {
+			clients[actor] = recent
+		}
+	}
+	s.days[key] = clients
+}
+
+func (a *clientActivity) merge(other *clientActivity) {
+	a.Requests += other.Requests
+	if other.FirstSeen.Before(a.FirstSeen) {
+		a.FirstSeen = other.FirstSeen
+	}
+	if other.LastSeen.After(a.LastSeen) {
+		a.LastSeen = other.LastSeen
+	}
+	addCounts(a.SourceIPs, other.SourceIPs)
+	addCounts(a.Targets, other.Targets)
+	addCounts(a.Inbounds, other.Inbounds)
+	addCounts(a.Outbounds, other.Outbounds)
+	addCounts(a.Kinds, other.Kinds)
+	addCounts(a.Networks, other.Networks)
+}
+
+func addCounts(counts, other map[string]int) {
+	for value, count := range other {
+		counts[value] += count
+	}
 }
 
 func (s *activityStats) DaysThrough(day time.Time) []time.Time {
@@ -175,14 +221,16 @@ func (a *App) sendDailyAccessReport(ctx context.Context, day time.Time) error {
 	if a == nil || a.activity == nil {
 		return nil
 	}
-	text, ok := a.activity.DailyReport(day)
-	if !ok {
+	key := dayKey(day)
+	clients := a.activity.takeDay(key)
+	if len(clients) == 0 {
 		return nil
 	}
+	text := formatActivityReport(key, clients, a.activity.outboundTags)
 	if err := notify.SendText(ctx, a.notifier, text); err != nil {
+		a.activity.restoreDay(key, clients)
 		return err
 	}
-	a.activity.DeleteDay(day)
 	return nil
 }
 
@@ -196,6 +244,22 @@ func (a *App) sendPendingAccessReports(ctx context.Context, through time.Time) e
 		}
 	}
 	return nil
+}
+
+func (a *App) runAccessReports(ctx context.Context) {
+	timer := time.NewTimer(timeUntilNextMidnight(time.Now()))
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-timer.C:
+			if err := a.sendPendingAccessReports(ctx, reportDayFor(now)); err != nil {
+				a.Logger.Printf("daily access report failed: %v", err)
+			}
+			timer.Reset(timeUntilNextMidnight(time.Now()))
+		}
+	}
 }
 
 func reportDayFor(now time.Time) time.Time {

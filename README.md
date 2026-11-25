@@ -425,7 +425,9 @@ sudo systemctl restart 3x-abuse-guard
 sudo 3x-abuse-guardctl test-event --email test --ip 198.51.100.10 --tag TORRENT
 ```
 
-Telegram 每天北京时间 00:00 发送前一天的访问统计，按 client email 分组；没有 email 时按来源 IP 分组。日报包含连接数、活跃时间、来源 IP、访问目标、入站、出站、协议和事件类型，不包含流量字节数。
+守护进程通过容量为 256 条的内存队列异步发送实时告警，队列满时将发送失败记录到服务日志。风险告警包含请求目标和可解析的目标协议／端口。Telegram 发送错误中的 Bot Token 会被脱敏。
+
+Telegram 每天北京时间 00:00 发送前一天的代理请求统计，按 client email 分组，缺少 email 时按来源 IP 分组。日报汇总 `TORRENT`、`blocked`、`CN_BLOCKED`、`shared-direct`、`direct` 和其他出站的命中数，并展示各客户端的活跃时间、来源 IP、请求目标、入站、协议和事件类型。请求数按已解析的 Xray access log 计算，表示路由记录，无法确认出站是否成功建立连接，也无法单独统计 Freedom `finalRules` 拦截。日报不包含流量字节数。
 
 日报目前属于 best-effort 内存统计：守护进程重启会丢失尚未发送的当日汇总。守护进程也从 access log 文件末尾开始跟踪，不补处理停机期间的历史日志。Xray 日志时间戳按主机本地时区解释，而日报固定使用北京时间；部署时应确保主机/Xray 时区符合预期。
 
